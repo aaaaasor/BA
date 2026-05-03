@@ -19,7 +19,7 @@ class TrainingConfig:
 @dataclass(frozen=True)
 class SamplingConfig:
     n_generated: int = 400
-    n_trajectories: int = 20
+    n_trajectories: int = 40
     time_steps: int = 100
 
 

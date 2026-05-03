@@ -40,7 +40,7 @@ title('Generated Samples vs Target');
 legend('Generated', 'Target Density', 'Location', 'northwest');
 
 subplot(2, 2, 3);
-max_curves = min(size(traj_path, 2), 20);
+max_curves = min(size(traj_path, 2), 40);
 hold on;
 for idx = 1:max_curves
     plot(traj_path(:, idx, 1), traj_path(:, idx, 2), 'LineWidth', 0.9);

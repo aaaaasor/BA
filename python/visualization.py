@@ -50,7 +50,7 @@ def plot_results(
     axes[0, 1].legend()
     axes[0, 1].grid(alpha=0.25)
 
-    max_curves = min(rollout_path.shape[1], 20)
+    max_curves = min(rollout_path.shape[1], 40)
     for idx in range(max_curves):
         axes[1, 0].plot(rollout_path[:, idx, 0], rollout_path[:, idx, 1], alpha=0.75)
     axes[1, 0].set_title("Sample Trajectories in 2D")

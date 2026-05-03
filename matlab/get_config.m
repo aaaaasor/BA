@@ -1,7 +1,7 @@
 function cfg = get_config()
 cfg.n_train = 500;
 cfg.n_generated = 400;
-cfg.n_trajectories = 20;
+cfg.n_trajectories = 40;
 cfg.n_time_slices = 100;
 cfg.time_steps = 100;
 cfg.t_min = 0.0;
