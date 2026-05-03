@@ -4,8 +4,8 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class MixtureConfig:
     weights: tuple[float, float] = (0.5, 0.5)
-    means: tuple[float, float] = (-2.0, 2.0)
-    stds: tuple[float, float] = (0.5, 0.7)
+    means: tuple[tuple[float, float], tuple[float, float]] = ((-2.0, -2.0), (2.0, 2.0))
+    stds: tuple[tuple[float, float], tuple[float, float]] = ((0.45, 0.70), (0.80, 0.55))
 
 
 @dataclass(frozen=True)
@@ -25,6 +25,6 @@ class SamplingConfig:
 
 @dataclass(frozen=True)
 class GPConfig:
-    length_scale_x: float = 1.0
+    length_scale_xy: float = 1.0
     signal_variance: float = 1.0
     noise_variance: float = 1e-3

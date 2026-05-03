@@ -8,10 +8,10 @@ cfg.t_min = 0.0;
 cfg.random_seed = 7;
 
 cfg.mixture.weights = [0.5, 0.5];
-cfg.mixture.means = [-2.0, 2.0];
-cfg.mixture.stds = [0.5, 0.7];
+cfg.mixture.means = [-2.0, -2.0; 2.0, 2.0];
+cfg.mixture.stds = [0.45, 0.70; 0.80, 0.55];
 
-cfg.gp.length_scale_x = 1.0;
+cfg.gp.length_scale_xy = 1.0;
 cfg.gp.signal_variance = 1.0;
 cfg.gp.noise_variance = 1e-3;
 end

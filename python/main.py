@@ -13,6 +13,7 @@ from visualization import plot_results
 
 
 def main() -> None:
+    this_dir = os.path.dirname(os.path.abspath(__file__))
     training_config = TrainingConfig()
     sampling_config = SamplingConfig()
     mixture_config = MixtureConfig()
@@ -31,6 +32,7 @@ def main() -> None:
 
     model = TimeSliceGPCollection(gp_config)
     model.fit(slice_times, x_slices, y_slices)
+
     x0_eval = sample_source(sampling_config.n_generated, rng)
     _, rollout_path = rk4_rollout(
         model=model,
@@ -42,7 +44,7 @@ def main() -> None:
     generated_samples = rollout_path[-1]
 
     x0_traj = sample_source(sampling_config.n_trajectories, rng)
-    traj_times, traj_path = rk4_rollout(
+    _, traj_path = rk4_rollout(
         model=model,
         x_init=x0_traj,
         t0=training_config.t_min,
@@ -50,22 +52,17 @@ def main() -> None:
         n_steps=sampling_config.time_steps,
     )
 
-    grid = np.linspace(-5.0, 5.0, 500)
-    output_dir = os.path.join("python", "outputs")
-    legacy_svg_path = os.path.join(output_dir, "gp_flow_matching_demo.svg")
+    axis_grid = np.linspace(-5.0, 5.0, 180)
+    grid_x, grid_y = np.meshgrid(axis_grid, axis_grid)
+    output_dir = os.path.join(this_dir, "outputs")
     output_path = os.path.join(output_dir, "gp_flow_matching_demo.png")
     os.makedirs(output_dir, exist_ok=True)
-    if os.path.exists(legacy_svg_path):
-        try:
-            os.remove(legacy_svg_path)
-        except PermissionError:
-            pass
     plot_results(
         output_path=output_path,
-        grid=grid,
+        grid_x=grid_x,
+        grid_y=grid_y,
         mixture_config=mixture_config,
         generated_samples=generated_samples,
-        rollout_times=traj_times,
         rollout_path=traj_path,
         x_train=x_train,
         y_train=y_train,
@@ -73,16 +70,25 @@ def main() -> None:
     )
     np.savetxt(
         os.path.join(output_dir, "generated_samples.csv"),
-        generated_samples.reshape(-1, 1),
+        generated_samples,
         delimiter=",",
-        header="x_t1",
+        header="x_t1,y_t1",
         comments="",
     )
+
+    traj_table = np.column_stack(
+        [
+            np.linspace(training_config.t_min, 1.0, sampling_config.time_steps + 1),
+            traj_path[:, :, 0],
+            traj_path[:, :, 1],
+        ]
+    )
+    traj_headers = ["t"] + [f"path_{idx}_x" for idx in range(traj_path.shape[1])] + [f"path_{idx}_y" for idx in range(traj_path.shape[1])]
     np.savetxt(
         os.path.join(output_dir, "trajectory_samples.csv"),
-        np.column_stack([traj_times, traj_path]),
+        traj_table,
         delimiter=",",
-        header="t," + ",".join(f"path_{idx}" for idx in range(traj_path.shape[1])),
+        header=",".join(traj_headers),
         comments="",
     )
 
@@ -91,8 +97,8 @@ def main() -> None:
     print("Total training pairs:", x_train.shape[0])
     print("Generated samples:", sampling_config.n_generated)
     print("Output figure:", os.path.abspath(output_path))
-    print("Generated mean:", float(np.mean(generated_samples)))
-    print("Generated std:", float(np.std(generated_samples)))
+    print("Generated mean:", np.mean(generated_samples, axis=0))
+    print("Generated std:", np.std(generated_samples, axis=0))
 
 
 if __name__ == "__main__":

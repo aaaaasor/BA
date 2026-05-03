@@ -6,6 +6,8 @@ else
     [~, index] = min(abs(slice_times - t));
 end
 model = model_collection.models{index};
-v = predict_gp_model(model, x(:));
-v = reshape(v, size(x));
+x_row = reshape(x, 1, []);
+vx = predict_gp_model(model.vx, x_row);
+vy = predict_gp_model(model.vy, x_row);
+v = [vx; vy];
 end

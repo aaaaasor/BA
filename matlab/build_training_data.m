@@ -10,15 +10,24 @@ if n_time_slices <= 0
     error('n_time_slices must be positive.');
 end
 
+if size(x0, 2) ~= 2 || any(size(x0) ~= size(x1))
+    error('x0 and x1 must both have shape (n_samples, 2).');
+end
+
 dt = (t_max - t_min) / n_time_slices;
 slice_times = t_min + (0:n_time_slices-1)' * dt;
-x0_row = x0(:)';
-x1_row = x1(:)';
-velocity_row = (x1(:) - x0(:))';
+n_samples = size(x0, 1);
 
-x_slices = (1 - slice_times) .* x0_row + slice_times .* x1_row;
-y_slices = repmat(velocity_row, numel(slice_times), 1);
+x_slices = zeros(n_time_slices, n_samples, 2);
+y_slices = zeros(n_time_slices, n_samples, 2);
+velocity = x1 - x0;
 
-x_plot = [repelem(slice_times, numel(x0)), reshape(x_slices.', [], 1)];
-y_plot = reshape(y_slices.', [], 1);
+for i = 1:n_time_slices
+    t = slice_times(i);
+    x_slices(i, :, :) = (1 - t) * x0 + t * x1;
+    y_slices(i, :, :) = velocity;
+end
+
+x_plot = [repelem(slice_times, n_samples), reshape(permute(x_slices, [2, 1, 3]), [], 2)];
+y_plot = reshape(permute(y_slices, [2, 1, 3]), [], 2);
 end
