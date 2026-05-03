@@ -1,4 +1,12 @@
 function plot_results(cfg, generated, traj_path, x_train, y_train)
+this_file = mfilename('fullpath');
+this_dir = fileparts(this_file);
+output_dir = fullfile(this_dir, 'outputs');
+if ~exist(output_dir, 'dir')
+    mkdir(output_dir);
+end
+output_path = fullfile(output_dir, 'gp_flow_matching_demo_matlab.png');
+
 axis_grid = linspace(-5.0, 5.0, 180);
 [grid_x, grid_y] = meshgrid(axis_grid, axis_grid);
 source_density = source_pdf(grid_x, grid_y);
@@ -57,4 +65,6 @@ xlabel('x_t');
 ylabel('y_t');
 title('Training States Colored by |v|');
 colorbar;
+
+exportgraphics(fig, output_path, 'Resolution', 180);
 end
