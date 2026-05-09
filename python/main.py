@@ -4,7 +4,7 @@ import os
 
 import numpy as np
 
-from config import GPConfig, MixtureConfig, SamplingConfig, TrainingConfig
+from config import GPConfig, MixtureConfig, SamplingConfig, TrainingConfig, VarianceConstraintConfig
 from distributions import sample_source, sample_target
 from flow_matching import build_training_data
 from gp_model import TimeSliceGPCollection
@@ -18,6 +18,7 @@ def main() -> None:
     sampling_config = SamplingConfig()
     mixture_config = MixtureConfig()
     gp_config = GPConfig()
+    variance_constraint_config = VarianceConstraintConfig()
     rng = np.random.default_rng(training_config.random_seed)
 
     x0_train = sample_source(training_config.n_train, rng)
@@ -40,6 +41,7 @@ def main() -> None:
         t0=training_config.t_min,
         t1=1.0,
         n_steps=sampling_config.time_steps,
+        constraint_config=variance_constraint_config,
     )
     generated_samples = rollout_path[-1]
 
@@ -50,6 +52,15 @@ def main() -> None:
         t0=training_config.t_min,
         t1=1.0,
         n_steps=sampling_config.time_steps,
+        constraint_config=variance_constraint_config,
+    )
+    traj_times = np.linspace(training_config.t_min, 1.0, sampling_config.time_steps + 1)
+    traj_gp_vars = np.asarray(
+        [
+            model.predict_variance(float(t_now), traj_path[step_idx])
+            for step_idx, t_now in enumerate(traj_times)
+        ],
+        dtype=float,
     )
 
     axis_grid = np.linspace(-5.0, 5.0, 180)
@@ -78,7 +89,7 @@ def main() -> None:
 
     traj_table = np.column_stack(
         [
-            np.linspace(training_config.t_min, 1.0, sampling_config.time_steps + 1),
+            traj_times,
             traj_path[:, :, 0],
             traj_path[:, :, 1],
         ]
@@ -91,14 +102,35 @@ def main() -> None:
         header=",".join(traj_headers),
         comments="",
     )
+    np.savetxt(
+        os.path.join(output_dir, "trajectory_gp_predictive_variances.csv"),
+        np.column_stack(
+            [
+                traj_times,
+                traj_gp_vars[:, :, 0],
+                traj_gp_vars[:, :, 1],
+            ]
+        ),
+        delimiter=",",
+        header=",".join(
+            ["t"]
+            + [f"path_{idx}_var_vx" for idx in range(traj_gp_vars.shape[1])]
+            + [f"path_{idx}_var_vy" for idx in range(traj_gp_vars.shape[1])]
+        ),
+        comments="",
+    )
 
     print("Training samples:", training_config.n_train)
     print("Time slices:", training_config.n_time_slices)
     print("Total training pairs:", x_train.shape[0])
     print("Generated samples:", sampling_config.n_generated)
     print("Output figure:", os.path.abspath(output_path))
+    print("Variance constraint enabled:", variance_constraint_config.enabled)
+    print("Variance threshold sigma^2_max:", variance_constraint_config.sigma2_max)
     print("Generated mean:", np.mean(generated_samples, axis=0))
     print("Generated std:", np.std(generated_samples, axis=0))
+    print("Final trajectory GP variance mean [vx, vy]:", np.mean(traj_gp_vars[-1], axis=0))
+    print("Final trajectory GP variance max [vx, vy]:", np.max(traj_gp_vars[-1], axis=0))
 
 
 if __name__ == "__main__":

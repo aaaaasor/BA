@@ -28,3 +28,11 @@ class GPConfig:
     length_scale_xy: float = 1.0
     signal_variance: float = 1.0
     noise_variance: float = 1e-3
+
+
+@dataclass(frozen=True)
+class VarianceConstraintConfig:
+    enabled: bool = True
+    sigma2_max: float = 5e-3
+    alpha_gain: float = 10.0
+    grad_tol: float = 1e-10

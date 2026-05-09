@@ -59,25 +59,27 @@ def plot_results(
     axes[1, 0].set_aspect("equal", adjustable="box")
     axes[1, 0].grid(alpha=0.25)
 
-    n_plot = min(3500, x_train.shape[0])
-    sample_idx = rng.choice(x_train.shape[0], size=n_plot, replace=False)
-    x_plot = x_train[sample_idx]
-    y_plot = y_train[sample_idx]
-    speed = np.linalg.norm(y_plot, axis=1)
-    scatter = axes[1, 1].scatter(
-        x_plot[:, 1],
-        x_plot[:, 2],
-        c=speed,
-        cmap="viridis",
-        s=12,
-        alpha=0.55,
+    n_quiver = min(450, x_train.shape[0])
+    quiver_idx = rng.choice(x_train.shape[0], size=n_quiver, replace=False)
+    x_quiver = x_train[quiver_idx]
+    y_quiver = y_train[quiver_idx]
+    axes[1, 1].quiver(
+        x_quiver[:, 1],
+        x_quiver[:, 2],
+        y_quiver[:, 0],
+        y_quiver[:, 1],
+        angles="xy",
+        scale_units="xy",
+        scale=8.0,
+        width=0.003,
+        alpha=0.75,
+        color="tab:blue",
     )
-    axes[1, 1].set_title("Training States Colored by |v|")
+    axes[1, 1].set_title("Training Velocity Field Arrows")
     axes[1, 1].set_xlabel("x_t")
     axes[1, 1].set_ylabel("y_t")
     axes[1, 1].set_aspect("equal", adjustable="box")
     axes[1, 1].grid(alpha=0.25)
-    fig.colorbar(scatter, ax=axes[1, 1], label="speed norm")
 
     fig.tight_layout()
     os.makedirs(os.path.dirname(output_path), exist_ok=True)

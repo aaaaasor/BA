@@ -10,6 +10,7 @@ class GaussianProcessRegressor2DInput:
         self.config = config
         self.x_train: np.ndarray | None = None
         self.alpha: np.ndarray | None = None
+        self.cho: np.ndarray | None = None
 
     def kernel(self, xa: np.ndarray, xb: np.ndarray) -> np.ndarray:
         xa = np.asarray(xa, dtype=float)
@@ -28,6 +29,7 @@ class GaussianProcessRegressor2DInput:
 
         self.x_train = x_train
         self.alpha = alpha
+        self.cho = cho
 
     def predict(self, x_test: np.ndarray) -> np.ndarray:
         if self.x_train is None or self.alpha is None:
@@ -35,6 +37,31 @@ class GaussianProcessRegressor2DInput:
 
         k_tx = self.kernel(np.asarray(x_test, dtype=float), self.x_train)
         return k_tx @ self.alpha
+
+    def predict_variance(self, x_test: np.ndarray) -> np.ndarray:
+        if self.x_train is None or self.cho is None:
+            raise RuntimeError("GP model must be fitted before predicting variance.")
+
+        x_test = np.asarray(x_test, dtype=float)
+        k_tx = self.kernel(x_test, self.x_train)
+        solve_term = np.linalg.solve(self.cho, k_tx.T)
+        prior_var = np.full(x_test.shape[0], self.config.signal_variance, dtype=float)
+        posterior_var = prior_var - np.sum(solve_term**2, axis=0)
+        return np.maximum(posterior_var.reshape(-1, 1), 0.0)
+
+    def predict_variance_grad_x(self, x_test: np.ndarray) -> np.ndarray:
+        if self.x_train is None or self.cho is None:
+            raise RuntimeError("GP model must be fitted before predicting variance gradients.")
+
+        x_test = np.asarray(x_test, dtype=float)
+        k_tx = self.kernel(x_test, self.x_train)
+        solve_term = np.linalg.solve(self.cho, k_tx.T)
+        weights = np.linalg.solve(self.cho.T, solve_term).T
+
+        diff = x_test[:, None, :] - self.x_train[None, :, :]
+        dk_dx = -(diff / (self.config.length_scale_xy**2)) * k_tx[:, :, None]
+        grad = -2.0 * np.sum(dk_dx * weights[:, :, None], axis=1)
+        return grad
 
 
 class VectorFieldGP2D:
@@ -50,6 +77,19 @@ class VectorFieldGP2D:
         pred_x = self.model_x.predict(x_test)
         pred_y = self.model_y.predict(x_test)
         return np.column_stack([pred_x.reshape(-1), pred_y.reshape(-1)])
+
+    def predict_variance(self, x_test: np.ndarray) -> np.ndarray:
+        var_x = self.model_x.predict_variance(x_test)
+        var_y = self.model_y.predict_variance(x_test)
+        return np.column_stack([var_x.reshape(-1), var_y.reshape(-1)])
+
+    def predict_variance_scalar(self, x_test: np.ndarray) -> np.ndarray:
+        return np.mean(self.predict_variance(x_test), axis=1)
+
+    def predict_variance_grad_x_scalar(self, x_test: np.ndarray) -> np.ndarray:
+        grad_x = self.model_x.predict_variance_grad_x(x_test)
+        grad_y = self.model_y.predict_variance_grad_x(x_test)
+        return 0.5 * (grad_x + grad_y)
 
 
 class TimeSliceGPCollection:
@@ -79,3 +119,15 @@ class TimeSliceGPCollection:
     def predict(self, t: float, x: np.ndarray) -> np.ndarray:
         model = self.models[self._slice_index(float(t))]
         return model.predict(np.asarray(x, dtype=float).reshape(-1, 2))
+
+    def predict_variance(self, t: float, x: np.ndarray) -> np.ndarray:
+        model = self.models[self._slice_index(float(t))]
+        return model.predict_variance(np.asarray(x, dtype=float).reshape(-1, 2))
+
+    def predict_variance_scalar(self, t: float, x: np.ndarray) -> np.ndarray:
+        model = self.models[self._slice_index(float(t))]
+        return model.predict_variance_scalar(np.asarray(x, dtype=float).reshape(-1, 2))
+
+    def predict_variance_grad_x_scalar(self, t: float, x: np.ndarray) -> np.ndarray:
+        model = self.models[self._slice_index(float(t))]
+        return model.predict_variance_grad_x_scalar(np.asarray(x, dtype=float).reshape(-1, 2))

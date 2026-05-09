@@ -5,5 +5,6 @@ alpha = L' \ (L \ y_train(:));
 
 model.x_train = x_train;
 model.alpha = alpha;
+model.L = L;
 model.gp = gp;
 end

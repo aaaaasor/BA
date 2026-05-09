@@ -53,18 +53,21 @@ title('Sample Trajectories in 2D');
 
 subplot(2, 2, 4);
 rng(cfg.random_seed);
-n_plot = min(3500, size(x_train, 1));
-sample_idx = randperm(size(x_train, 1), n_plot);
-x_plot = x_train(sample_idx, :);
-y_plot = y_train(sample_idx, :);
-speed = sqrt(sum(y_plot .^ 2, 2));
-scatter(x_plot(:, 2), x_plot(:, 3), 12, speed, 'filled', 'MarkerFaceAlpha', 0.38, 'MarkerEdgeAlpha', 0.18);
+n_quiver = min(450, size(x_train, 1));
+quiver_idx = randperm(size(x_train, 1), n_quiver);
+x_quiver = x_train(quiver_idx, :);
+y_quiver = y_train(quiver_idx, :);
+quiver(x_quiver(:, 2), x_quiver(:, 3), y_quiver(:, 1), y_quiver(:, 2), 3.5, ...
+    'Color', [0.20, 0.45, 0.85], 'LineWidth', 0.8, 'MaxHeadSize', 0.6);
 grid on;
 axis equal;
+x_pad = 0.6;
+y_pad = 0.6;
+xlim([min(x_train(:, 2)) - x_pad, max(x_train(:, 2)) + x_pad]);
+ylim([min(x_train(:, 3)) - y_pad, max(x_train(:, 3)) + y_pad]);
 xlabel('x_t');
 ylabel('y_t');
-title('Training States Colored by |v|');
-colorbar;
+title('Training Velocity Field Arrows');
 
 exportgraphics(fig, output_path, 'Resolution', 180);
 end

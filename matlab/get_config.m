@@ -14,4 +14,9 @@ cfg.mixture.stds = [0.45, 0.70; 0.80, 0.55];
 cfg.gp.length_scale_xy = 1.0;
 cfg.gp.signal_variance = 1.0;
 cfg.gp.noise_variance = 1e-3;
+
+cfg.variance_constraint.enabled = true;
+cfg.variance_constraint.sigma2_max = 5e-3;
+cfg.variance_constraint.alpha_gain = 10.0;
+cfg.variance_constraint.grad_tol = 1e-10;
 end
