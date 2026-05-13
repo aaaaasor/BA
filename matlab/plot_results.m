@@ -1,4 +1,4 @@
-function plot_results(cfg, generated, traj_path, x_train, y_train)
+function plot_results(cfg, traj_path, x_train, y_train)
 this_file = mfilename('fullpath');
 this_dir = fileparts(this_file);
 output_dir = fullfile(this_dir, 'outputs');
@@ -17,7 +17,9 @@ target_levels = linspace(0.05 * max(target_density(:)), 0.95 * max(target_densit
 fig = figure('Color', 'w', 'WindowStyle', 'normal', 'Units', 'normalized', 'Position', [0.10, 0.10, 0.75, 0.78]);
 movegui(fig, 'center');
 
-subplot(2, 2, 1);
+tiledlayout(2, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
+
+nexttile([1 2]);
 contour(grid_x, grid_y, source_density, source_levels, 'LineWidth', 1.3, 'LineColor', [0.45, 0.70, 0.98]);
 hold on;
 contour(grid_x, grid_y, target_density, target_levels, 'LineWidth', 1.1, 'LineColor', [0.98, 0.68, 0.40]);
@@ -28,18 +30,7 @@ ylabel('y');
 title('Source and Target Densities');
 legend('Source Density', 'Target Density', 'Location', 'northwest');
 
-subplot(2, 2, 2);
-scatter(generated(:, 1), generated(:, 2), 18, 'filled', 'MarkerFaceColor', [0.35, 0.62, 0.90], 'MarkerFaceAlpha', 0.35, 'MarkerEdgeAlpha', 0.20);
-hold on;
-contour(grid_x, grid_y, target_density, target_levels, 'LineWidth', 1.1, 'LineColor', [0.98, 0.68, 0.40]);
-grid on;
-axis equal;
-xlabel('x');
-ylabel('y');
-title('Generated Samples vs Target');
-legend('Generated', 'Target Density', 'Location', 'northwest');
-
-subplot(2, 2, 3);
+nexttile;
 max_curves = min(size(traj_path, 2), 40);
 hold on;
 for idx = 1:max_curves
@@ -51,7 +42,7 @@ xlabel('x(t)');
 ylabel('y(t)');
 title('Sample Trajectories in 2D');
 
-subplot(2, 2, 4);
+nexttile;
 rng(cfg.random_seed);
 n_quiver = min(450, size(x_train, 1));
 quiver_idx = randperm(size(x_train, 1), n_quiver);

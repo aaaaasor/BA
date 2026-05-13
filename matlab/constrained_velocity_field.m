@@ -14,10 +14,12 @@ end
 model = model_collection.models{index};
 x_row = reshape(x, 1, []);
 
-variance_now = predict_variance_scalar(model, x_row);
-grad_x = predict_variance_grad_x_scalar(model, x_row);
+[variance_now, grad_x] = predict_variance_scalar_and_grad_x_scalar(model, x_row);
+normalized_t = min(max(t, 0.0), 1.0);
+remaining = max(1.0 - normalized_t, constraint_cfg.time_eps);
+phi_t = constraint_cfg.omega_gain / (remaining ^ 2);
 h = constraint_cfg.sigma2_max - variance_now;
-rhs = constraint_cfg.alpha_gain * h - sum(grad_x .* mu', 2);
+rhs = phi_t * constraint_cfg.alpha_gain * h - sum(grad_x .* mu', 2);
 grad_norm_sq = sum(grad_x .^ 2, 2);
 
 u = zeros(size(mu'));
@@ -30,15 +32,9 @@ v = mu + u';
 end
 
 
-function y_var = predict_variance_scalar(model, x_test)
-var_x = predict_gp_variance(model.vx, x_test);
-var_y = predict_gp_variance(model.vy, x_test);
+function [y_var, grad] = predict_variance_scalar_and_grad_x_scalar(model, x_test)
+[grad_x, var_x] = predict_gp_variance_grad(model.vx, x_test);
+[grad_y, var_y] = predict_gp_variance_grad(model.vy, x_test);
 y_var = 0.5 * (var_x + var_y);
-end
-
-
-function grad = predict_variance_grad_x_scalar(model, x_test)
-grad_x = predict_gp_variance_grad(model.vx, x_test);
-grad_y = predict_gp_variance_grad(model.vy, x_test);
 grad = 0.5 * (grad_x + grad_y);
 end

@@ -3,19 +3,15 @@ clc;
 
 cfg = get_config();
 rng(cfg.random_seed);
-
+%% Training
 x0_train = sample_source(cfg.n_train);
 x1_train = sample_target(cfg.n_train, cfg.mixture);
 [slice_times, x_slices, y_slices, x_train, y_train] = build_training_data(x0_train, x1_train, cfg.n_time_slices, cfg.t_min, 1.0);
 
 gp_model = fit_time_slice_gp_models(slice_times, x_slices, y_slices, cfg.gp);
-
-x0_eval = sample_source(cfg.n_generated);
-[~, rollout_path] = ode45_rollout(gp_model, x0_eval, cfg.t_min, 1.0, cfg.time_steps, cfg.variance_constraint);
-generated = squeeze(rollout_path(end, :, :));
-
+%%
 x0_traj = sample_source(cfg.n_trajectories);
-[~, traj_path] = ode45_rollout(gp_model, x0_traj, cfg.t_min, 1.0, cfg.time_steps, cfg.variance_constraint);
+[~, traj_path] = rk4_rollout(gp_model, x0_traj, cfg.t_min, 1.0, cfg.time_steps, cfg.variance_constraint);
 traj_times = linspace(cfg.t_min, 1.0, cfg.time_steps + 1)';
 traj_gp_vars = zeros(cfg.time_steps + 1, cfg.n_trajectories, 2);
 slice_times = gp_model.slice_times(:);
@@ -27,7 +23,8 @@ for step_idx = 1:(cfg.time_steps + 1)
     traj_gp_vars(step_idx, :, 2) = predict_gp_variance(slice_model.vy, x_now);
 end
 
-plot_results(cfg, generated, traj_path, x_train, y_train);
+plot_results(cfg, traj_path, x_train, y_train);
+plot_variance_vs_time(cfg, traj_times, traj_gp_vars);
 
 this_file = mfilename('fullpath');
 this_dir = fileparts(this_file);
@@ -35,10 +32,6 @@ output_dir = fullfile(this_dir, 'outputs');
 if ~exist(output_dir, 'dir')
     mkdir(output_dir);
 end
-generated_headers = ["x_t1", "y_t1"];
-writematrix(generated_headers, fullfile(output_dir, 'generated_samples.csv'));
-writematrix(generated, fullfile(output_dir, 'generated_samples.csv'), 'WriteMode', 'append');
-
 traj_table = [traj_times, traj_path(:, :, 1), traj_path(:, :, 2)];
 traj_headers = ["t", ...
     arrayfun(@(idx) "path_" + string(idx) + "_x", 0:(size(traj_path, 2) - 1)), ...
@@ -56,10 +49,9 @@ writematrix(traj_gp_var_table, fullfile(output_dir, 'trajectory_gp_predictive_va
 disp(['Training samples: ', num2str(cfg.n_train)]);
 disp(['Time slices: ', num2str(cfg.n_time_slices)]);
 disp(['Total training pairs: ', num2str(size(x_train, 1))]);
-disp(['Generated samples: ', num2str(cfg.n_generated)]);
+disp(['Trajectory samples: ', num2str(cfg.n_trajectories)]);
 disp(['Variance constraint enabled: ', num2str(cfg.variance_constraint.enabled)]);
 disp(['Variance threshold sigma^2_max: ', num2str(cfg.variance_constraint.sigma2_max)]);
-disp(['Generated mean: ', num2str(mean(generated, 1))]);
-disp(['Generated std: ', num2str(std(generated, 0, 1))]);
+disp(['Variance-vs-time figure: ', fullfile(output_dir, 'trajectory_gp_variance_vs_time_matlab.png')]);
 disp(['Final trajectory GP variance mean [vx, vy]: ', num2str(mean(squeeze(traj_gp_vars(end, :, :)), 1))]);
 disp(['Final trajectory GP variance max [vx, vy]: ', num2str(max(squeeze(traj_gp_vars(end, :, :)), [], 1))]);
