@@ -1,3 +1,6 @@
+% Plot LocalGP predictive variance along the rollout trajectories.
+% The y-axis is logarithmic so both small safe trajectories and the few
+% larger outliers remain visible in one plot.
 function plot_variance_vs_time(cfg, traj_times, traj_gp_vars)
 this_file = mfilename('fullpath');
 this_dir = fileparts(this_file);
@@ -11,6 +14,7 @@ fig = figure('Color', 'w', 'WindowStyle', 'normal', 'Units', 'normalized', 'Posi
 movegui(fig, 'center');
 hold on;
 
+%% Plot one scalar variance curve per trajectory
 scalar_vars = traj_gp_vars(:, :, 1);
 for idx = 1:size(scalar_vars, 2)
     plot(traj_times, scalar_vars(:, idx), 'Color', [0.55, 0.72, 0.92], 'LineWidth', 1.0, ...
@@ -20,8 +24,8 @@ yline(cfg.variance_constraint.sigma2_max, '--', 'Color', [0.85, 0.20, 0.20], 'Li
 set(gca, 'YScale', 'log');
 grid on;
 xlabel('t');
-ylabel('posterior variance');
-title('Posterior Variance Along Rollout Trajectories');
+ylabel('LocalGP predictive variance');
+title('LocalGP Predictive Variance Along Rollout Trajectories');
 legend('Location', 'best');
 exportgraphics(fig, output_path, 'Resolution', 180);
 end

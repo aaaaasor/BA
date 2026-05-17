@@ -1,3 +1,4 @@
+% Evaluate an axis-aligned 2D Gaussian density on a grid.
 function y = normal_pdf_2d(x_grid, y_grid, mean_xy, std_xy)
 dx = x_grid - mean_xy(1);
 dy = y_grid - mean_xy(2);

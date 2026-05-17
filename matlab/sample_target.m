@@ -1,3 +1,6 @@
+% Sample 2D target points from the prescribed Gaussian mixture.
+% The first component corresponds to the lower-left mode and the second
+% to the upper-right mode.
 function x = sample_target(n_samples, mixture)
 u = rand(n_samples, 1);
 x = zeros(n_samples, 2);

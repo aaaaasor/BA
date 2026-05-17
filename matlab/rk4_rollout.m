@@ -1,3 +1,5 @@
+% Roll out trajectories with a fixed-step classical RK4 integrator.
+% The right-hand side is the constrained velocity field.
 function [times, path] = rk4_rollout(model_collection, ...
     x_init, t0, t1, n_steps, constraint_cfg)
 
@@ -11,6 +13,7 @@ n_samples = size(x_init, 1);
 path = zeros(n_steps + 1, n_samples, 2);
 path(1, :, :) = reshape(x_init, 1, n_samples, 2);
 
+%% Integrate each trajectory independently
 for sample_idx = 1:n_samples
     x_now = x_init(sample_idx, :)';
     path(1, sample_idx, :) = x_now;

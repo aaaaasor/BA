@@ -1,3 +1,7 @@
+% Plot the main MATLAB summary figure:
+% - source and target densities,
+% - rollout trajectories,
+% - training velocity vectors.
 function plot_results(cfg, traj_path, x_train, y_train)
 this_file = mfilename('fullpath');
 this_dir = fileparts(this_file);
@@ -14,11 +18,13 @@ target_density = target_pdf(grid_x, grid_y, cfg.mixture);
 source_levels = linspace(0.05 * max(source_density(:)), 0.95 * max(source_density(:)), 8);
 target_levels = linspace(0.05 * max(target_density(:)), 0.95 * max(target_density(:)), 8);
 
+%% Create figure layout
 fig = figure('Color', 'w', 'WindowStyle', 'normal', 'Units', 'normalized', 'Position', [0.10, 0.10, 0.75, 0.78]);
 movegui(fig, 'center');
 
 tiledlayout(2, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
 
+%% Source/target density contours
 nexttile([1 2]);
 contour(grid_x, grid_y, source_density, source_levels, 'LineWidth', 1.3, 'LineColor', [0.45, 0.70, 0.98]);
 hold on;
@@ -30,6 +36,7 @@ ylabel('y');
 title('Source and Target Densities');
 legend('Source Density', 'Target Density', 'Location', 'northwest');
 
+%% Rollout trajectories
 nexttile;
 max_curves = min(size(traj_path, 2), 40);
 hold on;
@@ -42,6 +49,7 @@ xlabel('x(t)');
 ylabel('y(t)');
 title('Sample Trajectories in 2D');
 
+%% Training velocity quiver plot
 nexttile;
 rng(cfg.random_seed);
 n_quiver = min(450, size(x_train, 1));

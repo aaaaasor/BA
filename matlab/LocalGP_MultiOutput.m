@@ -19,6 +19,8 @@ classdef LocalGP_MultiOutput < handle
 		L;
 		alpha;
 		aux_alpha;
+		% Prediction terms
+		v;
 		% Error Bound
 		tau = 1e-6;
 		Lk;
@@ -46,6 +48,7 @@ classdef LocalGP_MultiOutput < handle
 			obj.L = nan(obj.MaxDataQuantity,obj.MaxDataQuantity);
 			obj.aux_alpha = nan(obj.MaxDataQuantity,y_dim);
 			obj.alpha = nan(obj.MaxDataQuantity,y_dim);
+			obj.v = nan(obj.MaxDataQuantity,1);
 
 			obj.SigmaN = SigmaN;
 			obj.SigmaF = SigmaF;
@@ -72,6 +75,7 @@ classdef LocalGP_MultiOutput < handle
 			obj.L = nan(obj.MaxDataQuantity,obj.MaxDataQuantity);
 			obj.aux_alpha = nan(obj.MaxDataQuantity,obj.y_dim);
 			obj.alpha = nan(obj.MaxDataQuantity,obj.y_dim);
+			obj.v = nan(obj.MaxDataQuantity,1);
 
 			obj.ActivateState = false;
 		end
@@ -250,15 +254,17 @@ classdef LocalGP_MultiOutput < handle
 			else
 				X_set = obj.X(:,1:LocalGP_DataQuantity);
 				% Variance
-				temp_L = obj.L(1:LocalGP_DataQuantity,1:LocalGP_DataQuantity);
-				v = temp_L \ obj.kernel(X_set, x);
-				var = obj.kernel(x) - v'*v;
+				temp_L_now = obj.L(1:LocalGP_DataQuantity,1:LocalGP_DataQuantity);
+				Ktx_now = obj.kernel(X_set, x);
+				v_now = temp_L_now \ Ktx_now;
+				var = obj.kernel(x) - v_now' * v_now;
 				if var < 0
 					var = 0;
 				end
 				var = var * ones(obj.y_dim,1);
 				% Mean Value
-				mu = obj.aux_alpha(1:LocalGP_DataQuantity,:)' * v;
+				mu = obj.aux_alpha(1:LocalGP_DataQuantity,:)' * v_now;
+				obj.v(1:LocalGP_DataQuantity,:) = v_now;
 			end
 			% Error Bound
 			[beta,gamma] = obj.set_ErrorBound(x);
@@ -270,6 +276,34 @@ classdef LocalGP_MultiOutput < handle
 			end
 			eta_min = sqrt(beta) * obj.SigmaN + gamma;
 			eta_max = sqrt(beta) * obj.SigmaF + gamma;
+		end
+		%% Prediction of Mean Value, Variance, and Variance Gradient
+		function [mu,var,grad] = predict_variance_grad(obj,x)
+			LocalGP_DataQuantity = obj.DataQuantity;
+			if LocalGP_DataQuantity == 0
+				mu = zeros(obj.y_dim,1);
+				var = obj.SigmaF ^ 2;
+				grad = zeros(1,obj.x_dim);
+				return;
+			end
+
+			X_set = obj.X(:,1:LocalGP_DataQuantity);
+			temp_L_now = obj.L(1:LocalGP_DataQuantity,1:LocalGP_DataQuantity);
+			Ktx_now = obj.kernel(X_set, x);
+			v_now = temp_L_now \ Ktx_now;
+			weights_now = temp_L_now' \ v_now;
+			mu = obj.aux_alpha(1:LocalGP_DataQuantity,:)' * v_now;
+			var = obj.kernel(x) - v_now' * v_now;
+			if var < 0
+				var = 0;
+			end
+
+			diff = x' - X_set';
+			length_scale_sq = obj.SigmaL .^ 2;
+			dk_dx = -(diff ./ length_scale_sq') .* Ktx_now;
+			grad = -2.0 * sum(dk_dx .* weights_now, 1);
+
+			obj.v(1:LocalGP_DataQuantity,:) = v_now;
 		end
 		%% Error Bound
 		function [beta,gamma] = set_ErrorBound(obj,x)
