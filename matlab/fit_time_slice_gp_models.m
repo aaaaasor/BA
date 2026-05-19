@@ -11,7 +11,9 @@ for i = 1:n_slices
     y_train = squeeze(y_slices(i, :, :));
     local_gp = LocalGP_MultiOutput(2, 2, gp.max_data_quantity, ...
         gp.noise_std, gp.signal_std, gp.length_scale_vec);
-    local_gp.add_Alldata(x_train, y_train);
+    for sample_idx = 1:size(x_train, 1)
+        local_gp.addPoint(x_train(sample_idx, :)', y_train(sample_idx, :)');
+    end
     model.local_gp = local_gp;
     models{i} = model;
 end

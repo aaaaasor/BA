@@ -1,7 +1,6 @@
 % Collect all configuration values for the MATLAB demo.
 % The structure covers:
 % - training/data settings,
-% - target mixture parameters,
 % - LocalGP hyperparameters,
 % - LocalGP variance-constraint/PT-CBF parameters.
 function cfg = get_config()
@@ -11,10 +10,6 @@ cfg.n_time_slices = 100;
 cfg.time_steps = 100;
 cfg.t_min = 0.0;
 cfg.random_seed = 7;
-
-cfg.mixture.weights = [0.5, 0.5];
-cfg.mixture.means = [-2.0, -2.0; 2.0, 2.0];
-cfg.mixture.stds = [0.45, 0.70; 0.80, 0.55];
 
 cfg.gp.length_scale_vec = [1.0; 1.0];
 cfg.gp.signal_std = 1.0;

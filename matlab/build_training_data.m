@@ -1,38 +1,64 @@
-% Build time-sliced flow-matching training pairs.
-% For each slice time t, the intermediate state is x_t = (1-t)x0 + tx1,
-% while the target velocity remains the straight-line velocity x1 - x0.
-function [t_slices, x_slices, y_slices, x_plot, y_plot] = build_training_data(x0, x1, n_time_slices, t_min, t_max)
-if nargin < 4
+% Build time-slice training pairs from pre-generated 2D trajectories.
+% The MAT file stores one trajectory per column in the interleaved format
+% [x1; y1; x2; y2; ...]. Each time slice provides 2D states x_t and
+% finite-difference velocities v_t for LocalGP training.
+function [x_slices, y_slices, trajectory_points, x_plot, y_plot, trajectory_data, t_slices] = build_training_data(mat_path, t_min, t_max, max_trajectories)
+if nargin < 2
     t_min = 0.0;
 end
-if nargin < 5
+if nargin < 3
     t_max = 1.0;
 end
 
-if n_time_slices <= 0
-    error('n_time_slices must be positive.');
+loaded_data = load(mat_path, 'data_train');
+if ~isfield(loaded_data, 'data_train')
+    error('The MAT file does not contain the variable data_train.');
 end
 
-if size(x0, 2) ~= 2 || any(size(x0) ~= size(x1))
-    error('x0 and x1 must both have shape (n_samples, 2).');
+trajectory_data = double(loaded_data.data_train);
+if nargin >= 4 && ~isempty(max_trajectories)
+    max_trajectories = min(max_trajectories, size(trajectory_data, 2));
+    trajectory_data = trajectory_data(:, 1:max_trajectories);
 end
 
-dt = (t_max - t_min) / n_time_slices;
-t_slices = t_min + (0:n_time_slices-1)' * dt;
-n_samples = size(x0, 1);
+n_rows = size(trajectory_data, 1);
+if mod(n_rows, 2) ~= 0
+    error('Trajectory data must have an even number of rows.');
+end
 
-%% Allocate one 2D state and one 2D velocity tensor per time slice
-x_slices = zeros(n_time_slices, n_samples, 2);
+n_samples = size(trajectory_data, 2);
+n_time_slices = n_rows / 2;
+t_slices = linspace(t_min, t_max, n_time_slices)';
+
+%% Allocate one 2D point tensor per trajectory for plotting
+trajectory_points = zeros(n_time_slices, n_samples, 2);
 y_slices = zeros(n_time_slices, n_samples, 2);
-velocity = x1 - x0;
 
-%% Straight-line flow-matching interpolation
-for i = 1:n_time_slices
-    t = t_slices(i);
-    x_slices(i, :, :) = (1 - t) * x0 + t * x1;
-    y_slices(i, :, :) = velocity;
+if n_time_slices > 1
+    dt = t_slices(2) - t_slices(1);
+else
+    dt = 1.0;
 end
 
-x_plot = [repelem(t_slices, n_samples), reshape(permute(x_slices, [2, 1, 3]), [], 2)];
+%% Unpack each column trajectory and approximate its velocity by finite differences
+for sample_idx = 1:n_samples
+    trajectory_matrix = reshape(trajectory_data(:, sample_idx), 2, []);
+    positions = trajectory_matrix';
+    velocities = zeros(n_time_slices, 2);
+
+    if n_time_slices > 1
+        velocities(1, :) = (positions(2, :) - positions(1, :)) / dt;
+        velocities(end, :) = (positions(end, :) - positions(end - 1, :)) / dt;
+    end
+    for time_idx = 2:(n_time_slices - 1)
+        velocities(time_idx, :) = (positions(time_idx + 1, :) - positions(time_idx - 1, :)) / (2.0 * dt);
+    end
+
+    trajectory_points(:, sample_idx, :) = positions;
+    y_slices(:, sample_idx, :) = velocities;
+end
+
+x_slices = trajectory_points;
+x_plot = [repelem(t_slices, n_samples), reshape(permute(trajectory_points, [2, 1, 3]), [], 2)];
 y_plot = reshape(permute(y_slices, [2, 1, 3]), [], 2);
 end

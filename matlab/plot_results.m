@@ -1,8 +1,8 @@
 % Plot the main MATLAB summary figure:
-% - source and target densities,
+% - all training trajectories,
 % - rollout trajectories,
 % - training velocity vectors.
-function plot_results(cfg, traj_path, x_train, y_train)
+function plot_results(cfg, trajectory_points, traj_path, x_train, y_train)
 this_file = mfilename('fullpath');
 this_dir = fileparts(this_file);
 output_dir = fullfile(this_dir, 'outputs');
@@ -11,35 +11,31 @@ if ~exist(output_dir, 'dir')
 end
 output_path = fullfile(output_dir, 'gp_flow_matching_demo_matlab.png');
 
-axis_grid = linspace(-5.0, 5.0, 180);
-[grid_x, grid_y] = meshgrid(axis_grid, axis_grid);
-source_density = source_pdf(grid_x, grid_y);
-target_density = target_pdf(grid_x, grid_y, cfg.mixture);
-source_levels = linspace(0.05 * max(source_density(:)), 0.95 * max(source_density(:)), 8);
-target_levels = linspace(0.05 * max(target_density(:)), 0.95 * max(target_density(:)), 8);
-
 %% Create figure layout
 fig = figure('Color', 'w', 'WindowStyle', 'normal', 'Units', 'normalized', 'Position', [0.10, 0.10, 0.75, 0.78]);
 movegui(fig, 'center');
 
 tiledlayout(2, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
 
-%% Source/target density contours
+%% Training trajectory data
 nexttile([1 2]);
-contour(grid_x, grid_y, source_density, source_levels, 'LineWidth', 1.3, 'LineColor', [0.45, 0.70, 0.98]);
 hold on;
-contour(grid_x, grid_y, target_density, target_levels, 'LineWidth', 1.1, 'LineColor', [0.98, 0.68, 0.40]);
+n_training_curves = size(trajectory_points, 2);
+for idx = 1:n_training_curves
+    training_curve = squeeze(trajectory_points(:, idx, :));
+    plot(training_curve(:, 1), training_curve(:, 2), '.-', 'LineWidth', 0.8, ...
+        'Color', [0.35, 0.55, 0.85], 'HandleVisibility', 'off');
+end
 grid on;
 axis equal;
 xlabel('x');
 ylabel('y');
-title('Source and Target Densities');
-legend('Source Density', 'Target Density', 'Location', 'northwest');
+title(sprintf('Training Trajectory Data (2D, %d Points)', size(trajectory_points, 1)));
 
 %% Rollout trajectories
 nexttile;
-max_curves = min(size(traj_path, 2), 40);
 hold on;
+max_curves = min(size(traj_path, 2), 40);
 for idx = 1:max_curves
     plot(traj_path(:, idx, 1), traj_path(:, idx, 2), 'LineWidth', 0.9);
 end
