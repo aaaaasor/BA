@@ -7,7 +7,7 @@ output_dir = fullfile(this_dir, 'outputs');
 if ~exist(output_dir, 'dir')
     mkdir(output_dir);
 end
-output_path = fullfile(output_dir, 'gp_flow_matching_demo_matlab.png');
+output_path = fullfile(output_dir, 'gp_flow_matching_demo_matlab.emf');
 
 %% Figure Layout
 fig = figure('Color', 'w', 'WindowStyle', 'normal', ...
@@ -23,7 +23,7 @@ n_training_curves = size(target_points, 2);
 for idx = 1:n_training_curves
     training_curve = squeeze(target_points(:, idx, :));
     plot(training_curve(:, 1), training_curve(:, 2), '.-', 'LineWidth', 0.8, ...
-        'Color', [0.35, 0.55, 0.85], 'HandleVisibility', 'off');
+        'HandleVisibility', 'off');
 end
 grid on;
 axis equal;
@@ -59,5 +59,5 @@ xlabel('x');
 ylabel('y');
 title('10D ODE Rollout Trajectories');
 
-exportgraphics(fig, output_path, 'Resolution', 180);
+exportgraphics(fig, output_path, 'ContentType', 'vector');
 end

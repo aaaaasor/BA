@@ -7,7 +7,7 @@ output_dir = fullfile(this_dir, 'outputs');
 if ~exist(output_dir, 'dir')
     mkdir(output_dir);
 end
-output_path = fullfile(output_dir, 'trajectory_gp_variance_vs_time_matlab.png');
+output_path = fullfile(output_dir, 'trajectory_gp_variance_vs_time_matlab.emf');
 
 %% Figure Layout
 fig = figure('Color', 'w', 'WindowStyle', 'normal', ...
@@ -30,5 +30,5 @@ xlabel('s');
 ylabel('LocalGP predictive variance');
 title('LocalGP Predictive Variance Along 10D ODE Rollout');
 legend('Location', 'best');
-exportgraphics(fig, output_path, 'Resolution', 180);
+exportgraphics(fig, output_path, 'ContentType', 'vector');
 end

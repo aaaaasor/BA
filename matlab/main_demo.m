@@ -87,6 +87,6 @@ disp(['Total training trajectories: ', num2str(size(x_slices, 2))]);
 disp(['Rolled-out trajectories: ', num2str(n_eval)]);
 disp(['Variance threshold sigma^2_max: ', num2str(cfg.variance_constraint.sigma2_max)]);
 disp(['Variance-vs-time figure: ', ...
-    fullfile(output_dir, 'trajectory_gp_variance_vs_time_matlab.png')]);
+    fullfile(output_dir, 'trajectory_gp_variance_vs_time_matlab.emf')]);
 disp(['Final 10D trajectory LocalGP variance mean: ', num2str(mean(traj_gp_vars(end, :, 1)))]);
 disp(['Final 10D trajectory LocalGP variance max: ', num2str(max(traj_gp_vars(end, :, 1)))]);
