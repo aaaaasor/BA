@@ -1,10 +1,7 @@
-% Evaluate the PT-CBF-constrained velocity field from one LocalGP slice.
-% This function reuses one LocalGP class method to obtain:
-% - predictive mean mu,
-% - scalar LocalGP predictive variance,
-% - spatial gradient of that variance.
-% The correction term u is then computed from the barrier inequality.
+% Evaluate the PT-CBF-constrained trajectory-space velocity field from one
+% LocalGP flow slice.
 function v = constrained_velocity_field(model_collection, t, x, constraint_cfg)
+%% Select LocalGP Slice
 t_slices = model_collection.t_slices(:);
 if numel(t_slices) == 1
     index = 1;
@@ -12,11 +9,13 @@ else
     [~, index] = min(abs(t_slices - t));
 end
 model = model_collection.models{index};
+
+%% LocalGP Prediction
 x_col = reshape(x, [], 1);
 [mu, variance_now, grad_x] = model.local_gp.predict_variance_grad(x_col);
 mu = reshape(mu, [], 1);
 
-%% Return the nominal velocity when the constraint is disabled
+%% Nominal Velocity
 if nargin < 4 || ~constraint_cfg.enabled
     v = mu;
     return;

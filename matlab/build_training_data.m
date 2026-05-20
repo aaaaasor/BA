@@ -1,64 +1,69 @@
-% Build time-slice training pairs from pre-generated 2D trajectories.
-% The MAT file stores one trajectory per column in the interleaved format
-% [x1; y1; x2; y2; ...]. Each time slice provides 2D states x_t and
-% finite-difference velocities v_t for LocalGP training.
-function [x_slices, y_slices, trajectory_points, x_plot, y_plot, trajectory_data, t_slices] = build_training_data(mat_path, t_min, t_max, max_trajectories)
+% Build 10D trajectory-space flow-matching training data.
+% Each MAT-file column is one interleaved trajectory:
+% [x1; y1; x2; y2; ...].
+function [flow_slices, x_slices, y_slices, target_points, source_points, ...
+    target_data, source_data, trajectory_t_slices] = build_training_data( ...
+    mat_path, t_min, t_max, max_trajectories, n_flow_slices)
+%% Default Arguments
 if nargin < 2
     t_min = 0.0;
 end
 if nargin < 3
     t_max = 1.0;
 end
+if nargin < 5 || isempty(n_flow_slices)
+    n_flow_slices = 25;
+end
 
+%% Load Target Trajectories
 loaded_data = load(mat_path, 'data_train');
 if ~isfield(loaded_data, 'data_train')
     error('The MAT file does not contain the variable data_train.');
 end
 
-trajectory_data = double(loaded_data.data_train);
+target_data = double(loaded_data.data_train);
 if nargin >= 4 && ~isempty(max_trajectories)
-    max_trajectories = min(max_trajectories, size(trajectory_data, 2));
-    trajectory_data = trajectory_data(:, 1:max_trajectories);
+    max_trajectories = min(max_trajectories, size(target_data, 2));
+    target_data = target_data(:, 1:max_trajectories);
 end
 
-n_rows = size(trajectory_data, 1);
+%% Dimension Checks
+n_rows = size(target_data, 1);
 if mod(n_rows, 2) ~= 0
     error('Trajectory data must have an even number of rows.');
 end
 
-n_samples = size(trajectory_data, 2);
-n_time_slices = n_rows / 2;
-t_slices = linspace(t_min, t_max, n_time_slices)';
+n_samples = size(target_data, 2);
+n_points_per_traj = n_rows / 2;
+trajectory_t_slices = linspace(t_min, t_max, n_points_per_traj)';
+flow_slices = linspace(t_min, t_max, n_flow_slices)';
 
-%% Allocate one 2D point tensor per trajectory for plotting
-trajectory_points = zeros(n_time_slices, n_samples, 2);
-y_slices = zeros(n_time_slices, n_samples, 2);
+target_points = zeros(n_points_per_traj, n_samples, 2);
+source_points = zeros(n_points_per_traj, n_samples, 2);
+source_data = zeros(size(target_data));
 
-if n_time_slices > 1
-    dt = t_slices(2) - t_slices(1);
-else
-    dt = 1.0;
-end
-
-%% Unpack each column trajectory and approximate its velocity by finite differences
+%% Straight-Line Source Trajectories
 for sample_idx = 1:n_samples
-    trajectory_matrix = reshape(trajectory_data(:, sample_idx), 2, []);
-    positions = trajectory_matrix';
-    velocities = zeros(n_time_slices, 2);
+    target_matrix = reshape(target_data(:, sample_idx), 2, [])';
+    start_point = target_matrix(1, :);
+    end_point = target_matrix(end, :);
+    source_matrix = (1.0 - trajectory_t_slices) * start_point + trajectory_t_slices * end_point;
 
-    if n_time_slices > 1
-        velocities(1, :) = (positions(2, :) - positions(1, :)) / dt;
-        velocities(end, :) = (positions(end, :) - positions(end - 1, :)) / dt;
-    end
-    for time_idx = 2:(n_time_slices - 1)
-        velocities(time_idx, :) = (positions(time_idx + 1, :) - positions(time_idx - 1, :)) / (2.0 * dt);
-    end
-
-    trajectory_points(:, sample_idx, :) = positions;
-    y_slices(:, sample_idx, :) = velocities;
+    target_points(:, sample_idx, :) = target_matrix;
+    source_points(:, sample_idx, :) = source_matrix;
+    source_data(:, sample_idx) = reshape(source_matrix', [], 1);
 end
 
-x_slices = trajectory_points;
-x_plot = [repelem(t_slices, n_samples), reshape(permute(trajectory_points, [2, 1, 3]), [], 2)];
-y_plot = reshape(permute(y_slices, [2, 1, 3]), [], 2);
+target_vectors = target_data';
+source_vectors = source_data';
+velocity_vectors = target_vectors - source_vectors;
+
+%% Flow-Matching Pairs
+x_slices = zeros(numel(flow_slices), n_samples, n_rows);
+y_slices = zeros(numel(flow_slices), n_samples, n_rows);
+for slice_idx = 1:numel(flow_slices)
+    s = flow_slices(slice_idx);
+    x_slices(slice_idx, :, :) = (1.0 - s) * source_vectors + s * target_vectors;
+    y_slices(slice_idx, :, :) = velocity_vectors;
+end
 end

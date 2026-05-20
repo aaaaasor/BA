@@ -1,19 +1,18 @@
-% Fit one LocalGP_MultiOutput model for each time slice.
-% Each slice sees the 2D state (x, y) as input and the 2D velocity
-% (v_x, v_y) as output.
+% Fit one LocalGP_MultiOutput model for each trajectory-space flow slice.
 function model_collection = fit_time_slice_gp_models(t_slices, x_slices, y_slices, gp)
+%% Dimensions
 n_slices = numel(t_slices);
 models = cell(n_slices, 1);
+x_dim = size(x_slices, 3);
+y_dim = size(y_slices, 3);
 
-%% Fit one local multi-output GP per time slice
+%% Fit LocalGP Slices
 for i = 1:n_slices
     x_train = squeeze(x_slices(i, :, :));
     y_train = squeeze(y_slices(i, :, :));
-    local_gp = LocalGP_MultiOutput(2, 2, gp.max_data_quantity, ...
+    local_gp = LocalGP_MultiOutput(x_dim, y_dim, gp.max_data_quantity, ...
         gp.noise_std, gp.signal_std, gp.length_scale_vec);
-    for sample_idx = 1:size(x_train, 1)
-        local_gp.addPoint(x_train(sample_idx, :)', y_train(sample_idx, :)');
-    end
+    local_gp.add_Alldata(x_train, y_train);
     model.local_gp = local_gp;
     models{i} = model;
 end
