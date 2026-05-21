@@ -8,6 +8,12 @@ cfg.time_steps = 100;
 cfg.t_min = 0.0;
 cfg.random_seed = 7;
 
+%% Animation
+cfg.animation.enabled = true;
+cfg.animation.trajectory_nr = 1;
+cfg.animation.frame_stride = 2;
+cfg.animation.delay_time = 0.05;
+
 %% LocalGP Parameters
 cfg.gp.length_scale_vec = ones(10, 1);
 cfg.gp.signal_std = 1.0;

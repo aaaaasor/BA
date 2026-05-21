@@ -53,6 +53,14 @@ end
 %% Plot Results
 plot_results(cfg, target_points, source_plot_points, reconstructed_points);
 plot_variance_vs_time(cfg, rollout_times, traj_gp_vars);
+animation_path = "";
+if cfg.animation.enabled && n_eval > 0
+    animation_nr = min(cfg.animation.trajectory_nr, n_eval);
+    animation_path = animate_single_trajectory(cfg, rollout_times, ...
+        squeeze(traj_path_10d(:, animation_nr, :)), ...
+        squeeze(source_plot_points(:, animation_nr, :)), ...
+        squeeze(target_points(:, traj_idx(animation_nr), :)));
+end
 
 %% Export Results
 output_dir = fullfile(this_dir, 'outputs');
@@ -88,5 +96,8 @@ disp(['Rolled-out trajectories: ', num2str(n_eval)]);
 disp(['Variance threshold sigma^2_max: ', num2str(cfg.variance_constraint.sigma2_max)]);
 disp(['Variance-vs-time figure: ', ...
     fullfile(output_dir, 'trajectory_gp_variance_vs_time_matlab.emf')]);
+if strlength(animation_path) > 0
+    disp(['Single-trajectory animation: ', char(animation_path)]);
+end
 disp(['Final 10D trajectory LocalGP variance mean: ', num2str(mean(traj_gp_vars(end, :, 1)))]);
 disp(['Final 10D trajectory LocalGP variance max: ', num2str(max(traj_gp_vars(end, :, 1)))]);

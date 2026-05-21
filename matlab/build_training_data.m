@@ -40,18 +40,15 @@ flow_slices = linspace(t_min, t_max, n_flow_slices)';
 
 target_points = zeros(n_points_per_traj, n_samples, 2);
 source_points = zeros(n_points_per_traj, n_samples, 2);
-source_data = zeros(size(target_data));
+source_data = randn(size(target_data));
 
-%% Straight-Line Source Trajectories
+%% Target And Source Trajectories
 for sample_idx = 1:n_samples
     target_matrix = reshape(target_data(:, sample_idx), 2, [])';
-    start_point = target_matrix(1, :);
-    end_point = target_matrix(end, :);
-    source_matrix = (1.0 - trajectory_t_slices) * start_point + trajectory_t_slices * end_point;
+    source_matrix = reshape(source_data(:, sample_idx), 2, [])';
 
     target_points(:, sample_idx, :) = target_matrix;
     source_points(:, sample_idx, :) = source_matrix;
-    source_data(:, sample_idx) = reshape(source_matrix', [], 1);
 end
 
 target_vectors = target_data';
