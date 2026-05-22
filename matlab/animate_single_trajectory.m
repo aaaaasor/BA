@@ -1,6 +1,6 @@
 % Animate one 10D trajectory-space ODE rollout.
 function output_path = animate_single_trajectory(cfg, rollout_times, ...
-    traj_path_single, source_points, target_points)
+    traj_path_single, source_points)
 %% Output Path
 this_file = mfilename('fullpath');
 this_dir = fileparts(this_file);
@@ -12,7 +12,7 @@ output_path = fullfile(output_dir, 'single_trajectory_rollout.gif');
 
 %% Plot Limits
 all_rollout_points = reshape(traj_path_single', 2, [])';
-all_points = [all_rollout_points; source_points; target_points];
+all_points = [all_rollout_points; source_points];
 x_pad = 0.08 * (max(all_points(:, 1)) - min(all_points(:, 1)));
 y_pad = 0.08 * (max(all_points(:, 2)) - min(all_points(:, 2)));
 if x_pad <= 0
@@ -33,9 +33,6 @@ hold(ax, 'on');
 h_source = plot(ax, source_points(:, 1), source_points(:, 2), '--', ...
     'Color', [0.45, 0.45, 0.45], 'LineWidth', 1.1, ...
     'DisplayName', 'source');
-h_target = plot(ax, target_points(:, 1), target_points(:, 2), '-', ...
-    'Color', [0.15, 0.55, 0.25], 'LineWidth', 1.4, ...
-    'DisplayName', 'target');
 h_rollout = plot(ax, nan, nan, '.-', ...
     'Color', [0.10, 0.35, 0.90], 'LineWidth', 1.8, ...
     'MarkerSize', 14, 'DisplayName', 'rollout');
@@ -45,7 +42,7 @@ xlim(ax, x_limits);
 ylim(ax, y_limits);
 xlabel(ax, 'x');
 ylabel(ax, 'y');
-legend(ax, [h_source, h_target, h_rollout], 'Location', 'best', ...
+legend(ax, [h_source, h_rollout], 'Location', 'best', ...
     'AutoUpdate', 'off');
 
 %% GIF Frames
@@ -61,7 +58,7 @@ for frame_nr = 1:numel(frame_idx_set)
 
     set(h_rollout, 'XData', current_curve(:, 1), ...
         'YData', current_curve(:, 2));
-    title(ax, sprintf('Single 10D ODE Rollout, s = %.2f', s_now));
+    title(ax, sprintf('Single 10D ODE Rollout in Standardized Space, s = %.2f', s_now));
     drawnow;
 
     frame = getframe(fig);

@@ -1,4 +1,4 @@
-% Plot LocalGP predictive variance along the 10D ODE rollout trajectories.
+% Plot LoG-GP predictive variance along the 10D ODE rollout trajectories.
 function plot_variance_vs_time(cfg, traj_times, traj_gp_vars)
 %% Output Path
 this_file = mfilename('fullpath');
@@ -27,8 +27,8 @@ yline(cfg.variance_constraint.sigma2_max, '--', ...
 set(gca, 'YScale', 'log');
 grid on;
 xlabel('s');
-ylabel('LocalGP predictive variance');
-title('LocalGP Predictive Variance Along 10D ODE Rollout');
+ylabel('LoG-GP predictive variance');
+title('LoG-GP Predictive Variance Along 10D ODE Rollout');
 legend('Location', 'best');
 exportgraphics(fig, output_path, 'ContentType', 'vector');
 end

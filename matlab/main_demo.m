@@ -1,4 +1,4 @@
-% Main entry point for the MATLAB 10D trajectory-space LocalGP ODE demo.
+% Main entry point for the MATLAB 10D trajectory-space LoG-GP ODE demo.
 clear;
 clc;
 
@@ -10,12 +10,15 @@ rng(cfg.random_seed);
 this_file = mfilename('fullpath');
 this_dir = fileparts(this_file);
 trajectory_mat_path = fullfile(this_dir, 'trajectory_data', 'data_2D.mat');
-[flow_slices, x_slices, y_slices, target_points, source_points, ...
-    target_data, source_data, trajectory_t_slices] = build_training_data( ...
+[s_slices, x_slices, y_slices, target_points, source_points, ...
+    target_data, source_data, trajectory_t_slices, data_transform] = build_training_data( ...
     trajectory_mat_path, cfg.t_min, 1.0, cfg.n_train, cfg.n_time_slices);
 
-%% Fit LocalGP Flow Slices
-model_collection = fit_time_slice_gp_models(flow_slices, x_slices, y_slices, cfg.gp);
+%% LoG-GP Hyperparameters
+cfg.gp = optimize_gp_hyperparameters(x_slices, y_slices, cfg.gp, s_slices);
+
+%% Fit LoG-GP Flow Model
+model_collection = fit_loggp_model(s_slices, x_slices, y_slices, cfg.gp);
 
 %% RK4 Rollout
 n_available_traj = size(source_data, 2);
@@ -25,7 +28,17 @@ n_eval = size(x_init, 1);
 [rollout_times, traj_path_10d] = rk4_rollout(model_collection, ...
     x_init, cfg.t_min, 1.0, cfg.time_steps, cfg.variance_constraint);
 
-final_trajectory_data = squeeze(traj_path_10d(end, :, :));
+traj_path_plot = zeros(size(traj_path_10d));
+for time_idx = 1:numel(rollout_times)
+    states_now = squeeze(traj_path_10d(time_idx, :, :));
+    if n_eval == 1
+        states_now = reshape(states_now, 1, []);
+    end
+    states_plot = data_transform.std * states_now' + data_transform.mean;
+    traj_path_plot(time_idx, :, :) = reshape(states_plot', 1, n_eval, []);
+end
+
+final_trajectory_data = squeeze(traj_path_plot(end, :, :));
 if n_eval == 1
     final_trajectory_data = reshape(final_trajectory_data, 1, []);
 end
@@ -42,9 +55,8 @@ traj_gp_vars = zeros(numel(rollout_times), n_eval, 1);
 for sample_idx = 1:n_eval
     for time_idx = 1:numel(rollout_times)
         s_now = rollout_times(time_idx);
-        [~, slice_idx] = min(abs(model_collection.t_slices - s_now));
-        model = model_collection.models{slice_idx};
-        z_now = squeeze(traj_path_10d(time_idx, sample_idx, :));
+        model = model_collection.model;
+        z_now = [s_now; squeeze(traj_path_10d(time_idx, sample_idx, :))];
         [~, variance_now] = model.local_gp.predict_variance_grad(z_now);
         traj_gp_vars(time_idx, sample_idx, 1) = variance_now;
     end
@@ -58,8 +70,7 @@ if cfg.animation.enabled && n_eval > 0
     animation_nr = min(cfg.animation.trajectory_nr, n_eval);
     animation_path = animate_single_trajectory(cfg, rollout_times, ...
         squeeze(traj_path_10d(:, animation_nr, :)), ...
-        squeeze(source_plot_points(:, animation_nr, :)), ...
-        squeeze(target_points(:, traj_idx(animation_nr), :)));
+        squeeze(source_plot_points(:, animation_nr, :)));
 end
 
 %% Export Results
@@ -88,9 +99,13 @@ writematrix(traj_gp_var_table, ...
 %% Console Summary
 disp(['Training trajectories loaded: ', num2str(size(target_data, 2))]);
 disp(['Trajectory points per sample: ', num2str(numel(trajectory_t_slices))]);
-disp(['10D ODE flow slices: ', num2str(numel(flow_slices))]);
-disp(['LocalGP input dimension: ', num2str(size(x_slices, 3))]);
-disp(['LocalGP output dimension: ', num2str(size(y_slices, 3))]);
+disp(['10D ODE s slices: ', num2str(numel(s_slices))]);
+disp(['LoG-GP input dimension: ', num2str(size(x_slices, 3) + 1)]);
+disp(['LoG-GP output dimension: ', num2str(size(y_slices, 3))]);
+disp(['GP model type: ', model_collection.model_type]);
+disp(['LoG-GP noise std SigmaN: ', num2str(cfg.gp.noise_std)]);
+disp(['LoG-GP signal std SigmaF: ', num2str(cfg.gp.signal_std)]);
+disp(['LoG-GP length scale SigmaL: ', mat2str(cfg.gp.length_scale_vec(:)', 4)]);
 disp(['Total training trajectories: ', num2str(size(x_slices, 2))]);
 disp(['Rolled-out trajectories: ', num2str(n_eval)]);
 disp(['Variance threshold sigma^2_max: ', num2str(cfg.variance_constraint.sigma2_max)]);
@@ -99,5 +114,5 @@ disp(['Variance-vs-time figure: ', ...
 if strlength(animation_path) > 0
     disp(['Single-trajectory animation: ', char(animation_path)]);
 end
-disp(['Final 10D trajectory LocalGP variance mean: ', num2str(mean(traj_gp_vars(end, :, 1)))]);
-disp(['Final 10D trajectory LocalGP variance max: ', num2str(max(traj_gp_vars(end, :, 1)))]);
+disp(['Final 10D trajectory LoG-GP variance mean: ', num2str(mean(traj_gp_vars(end, :, 1)))]);
+disp(['Final 10D trajectory LoG-GP variance max: ', num2str(max(traj_gp_vars(end, :, 1)))]);
