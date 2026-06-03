@@ -34,7 +34,5 @@ class GPConfig:
 class VarianceConstraintConfig:
     enabled: bool = True
     sigma2_max: float = 5e-3
-    alpha_gain: float = 5
-    omega_gain: float = 0.12
-    time_eps: float = 5e-2
+    alpha_gain: float = 10.0
     grad_tol: float = 1e-10

@@ -37,11 +37,8 @@ def constrained_velocity_field(
     variance_now = _variance_scalar(model, t, x)
     grad_x = model.predict_variance_grad_x_scalar(t, x)
 
-    normalized_t = (t - t0) / max(t1 - t0, constraint_config.time_eps)
-    remaining = max(1.0 - normalized_t, constraint_config.time_eps)
-    phi_t = constraint_config.omega_gain / (remaining**2)
     h = constraint_config.sigma2_max - variance_now
-    rhs = phi_t * constraint_config.alpha_gain * h - np.sum(grad_x * mu, axis=1)
+    rhs = constraint_config.alpha_gain * h - np.sum(grad_x * mu, axis=1)
     grad_norm_sq = np.sum(grad_x**2, axis=1)
 
     u = np.zeros_like(mu, dtype=float)

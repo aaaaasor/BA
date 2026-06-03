@@ -95,16 +95,16 @@ class VectorFieldGP2D:
 class TimeSliceGPCollection:
     def __init__(self, config: GPConfig):
         self.config = config
-        self.t_slices: np.ndarray | None = None
+        self.slice_times: np.ndarray | None = None
         self.models: list[VectorFieldGP2D] = []
 
     def fit(
         self,
-        t_slices: np.ndarray,
+        slice_times: np.ndarray,
         x_slices: np.ndarray,
         y_slices: np.ndarray,
     ) -> None:
-        self.t_slices = np.asarray(t_slices, dtype=float)
+        self.slice_times = np.asarray(slice_times, dtype=float)
         self.models = []
         for x_train, y_train in zip(x_slices, y_slices):
             model = VectorFieldGP2D(self.config)
@@ -112,9 +112,9 @@ class TimeSliceGPCollection:
             self.models.append(model)
 
     def _slice_index(self, t: float) -> int:
-        if self.t_slices is None or not self.models:
+        if self.slice_times is None or not self.models:
             raise RuntimeError("Time-slice GP collection must be fitted before prediction.")
-        return int(np.argmin(np.abs(self.t_slices - t)))
+        return int(np.argmin(np.abs(self.slice_times - t)))
 
     def predict(self, t: float, x: np.ndarray) -> np.ndarray:
         model = self.models[self._slice_index(float(t))]
