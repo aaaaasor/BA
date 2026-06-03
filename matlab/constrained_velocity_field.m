@@ -1,23 +1,49 @@
 % Evaluate the PT-CBF-constrained trajectory-space velocity field.
-function v = constrained_velocity_field(model_collection, t, x, constraint_cfg)
+function v = constrained_velocity_field(model_collection, t, x, ...
+    constraint_cfg, fixed_mask)
 %% GP Prediction
 x_col = reshape(x, [], 1);
+if nargin < 5 || isempty(fixed_mask)
+    fixed_mask = false(size(x_col));
+end
+fixed_mask = reshape(fixed_mask, [], 1);
 model = model_collection.model;
 gp_input = [t; x_col];
-[mu, variance_now, grad_all] = model.local_gp.predict_variance_grad(gp_input);
-variance_t = grad_all(1);
-grad_x = grad_all(2:end);
-mu = reshape(mu, [], 1);
-
-%% Nominal Velocity
 if nargin < 4 || ~constraint_cfg.enabled
-    v = mu;
+    v = predict_mean_velocity(model, gp_input);
     return;
 end
 
+%% GP Prediction With Uncertainty Gradient
+if isfield(model, 'output_models')
+    y_dim = numel(model.output_models);
+    mu = zeros(y_dim, 1);
+    variance_set = zeros(y_dim, 1);
+    grad_set = zeros(y_dim, numel(gp_input));
+    for output_idx = 1:y_dim
+        [mu_now, variance_now, grad_now] = ...
+            model.output_models{output_idx}.predict_variance_grad(gp_input);
+        mu(output_idx) = mu_now;
+        variance_set(output_idx) = variance_now;
+        grad_set(output_idx, :) = grad_now;
+    end
+    variance_now = sqrt(max(sum(variance_set), 0.0));
+    if variance_now > eps
+        grad_all = sum(grad_set, 1) ./ (2.0 * variance_now);
+    else
+        grad_all = zeros(1, numel(gp_input));
+    end
+else
+    [mu, variance_now, grad_all] = model.local_gp.predict_variance_grad(gp_input);
+end
+variance_t = grad_all(1);
+grad_x = grad_all(2:end);
+grad_x(fixed_mask') = 0.0;
+mu = reshape(mu, [], 1);
+
 %% PT-CBF correction
 normalized_t = min(max(t, 0.0), 1.0);
-remaining = max(1.0 - normalized_t, constraint_cfg.time_eps);
+remaining = 1.0 - normalized_t;
 phi_t = constraint_cfg.omega_gain / (remaining ^ 2);
 h = constraint_cfg.sigma2_max - variance_now;
 rhs = phi_t * constraint_cfg.alpha_gain * h - variance_t - sum(grad_x .* mu', 2);
@@ -30,4 +56,18 @@ if any(active)
     u(active, :) = grad_x(active, :) .* scale;
 end
 v = mu + u';
+end
+
+function mu = predict_mean_velocity(model, gp_input)
+if isfield(model, 'output_models')
+    y_dim = numel(model.output_models);
+    mu = zeros(y_dim, 1);
+    for output_idx = 1:y_dim
+        mu(output_idx) = model.output_models{output_idx}.predict( ...
+            gp_input, 0.0);
+    end
+else
+    mu = model.local_gp.predict(gp_input, zeros(model.local_gp.y_dim, 1));
+end
+mu = reshape(mu, [], 1);
 end

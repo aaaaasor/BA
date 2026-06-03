@@ -16,6 +16,18 @@ movegui(fig, 'center');
 
 tiledlayout(1, 3, 'TileSpacing', 'compact', 'Padding', 'compact');
 
+%% Shared Target/Rollout Axis Limits
+target_xy = reshape(target_points, [], 2);
+rollout_xy = reshape(reconstructed_points, [], 2);
+comparison_xy = [target_xy; rollout_xy];
+comparison_xy = comparison_xy(all(isfinite(comparison_xy), 2), :);
+x_limits = [min(comparison_xy(:, 1)), max(comparison_xy(:, 1))];
+y_limits = [min(comparison_xy(:, 2)), max(comparison_xy(:, 2))];
+x_padding = 0.05 * max(diff(x_limits), eps);
+y_padding = 0.05 * max(diff(y_limits), eps);
+x_limits = x_limits + [-x_padding, x_padding];
+y_limits = y_limits + [-y_padding, y_padding];
+
 %% Target Trajectories
 nexttile;
 hold on;
@@ -27,6 +39,8 @@ for idx = 1:n_training_curves
 end
 grid on;
 axis equal;
+xlim(x_limits);
+ylim(y_limits);
 xlabel('x');
 ylabel('y');
 title(sprintf('Target Trajectory Data (2D, %d Points)', size(target_points, 1)));
@@ -49,15 +63,102 @@ title('10D ODE Source Trajectories');
 nexttile;
 hold on;
 max_curves = min(size(reconstructed_points, 2), cfg.n_trajectories);
+if cfg.run_second_level
+    fprintf('Plotting second-level rollout sample curves: %d / %d\n', ...
+        max_curves, size(reconstructed_points, 2));
+end
+rollout_colors = lines(max(max_curves, 1));
 for idx = 1:max_curves
     reconstructed_curve = squeeze(reconstructed_points(:, idx, :));
-    plot(reconstructed_curve(:, 1), reconstructed_curve(:, 2), 'LineWidth', 0.9);
+    if cfg.run_second_level
+        if idx == 1
+            plot(reconstructed_curve(:, 1), reconstructed_curve(:, 2), ...
+                'Color', rollout_colors(idx, :), 'LineWidth', 1.1, ...
+                'DisplayName', 'Stage 2 sample curves');
+        else
+            plot(reconstructed_curve(:, 1), reconstructed_curve(:, 2), ...
+                'Color', rollout_colors(idx, :), 'LineWidth', 1.1, ...
+                'HandleVisibility', 'off');
+        end
+    else
+        plot(reconstructed_curve(:, 1), reconstructed_curve(:, 2), ...
+            'LineWidth', 0.9);
+    end
+end
+if cfg.run_second_level && max_curves > 0
+    anchor_idx = 1:(cfg.segment_points_per_segment - 1): ...
+        size(reconstructed_points, 1);
+    refined_idx = setdiff(1:size(reconstructed_points, 1), anchor_idx);
+    for idx = 1:max_curves
+        refined_curve = squeeze(reconstructed_points(refined_idx, idx, :));
+        if idx == 1
+            plot(refined_curve(:, 1), refined_curve(:, 2), 'o', ...
+                'Color', rollout_colors(idx, :), ...
+                'MarkerFaceColor', rollout_colors(idx, :), ...
+                'MarkerSize', 4, ...
+                'LineStyle', 'none', ...
+                'DisplayName', 'Stage 2 generated points');
+        else
+            plot(refined_curve(:, 1), refined_curve(:, 2), 'o', ...
+                'Color', rollout_colors(idx, :), ...
+                'MarkerFaceColor', rollout_colors(idx, :), ...
+                'MarkerSize', 4, ...
+                'LineStyle', 'none', ...
+                'HandleVisibility', 'off');
+        end
+    end
+    if isfield(cfg, 'reference_points') && ~isempty(cfg.reference_points)
+        reference_points = cfg.reference_points;
+        n_reference_curves = min(size(reference_points, 2), max_curves);
+        reference_label = 'Training reference curve';
+        if isfield(cfg, 'reference_label')
+            reference_label = cfg.reference_label;
+        end
+        if isfield(cfg, 'reference_curve_count')
+            n_reference_curves = min(n_reference_curves, ...
+                cfg.reference_curve_count);
+        end
+        for idx = 1:n_reference_curves
+            reference_curve = squeeze(reference_points(:, idx, :));
+            if idx == 1
+                plot(reference_curve(:, 1), reference_curve(:, 2), ...
+                    'Color', [0.9, 0.0, 0.0], 'LineStyle', '-', ...
+                    'LineWidth', 3.0, 'DisplayName', reference_label);
+            else
+                plot(reference_curve(:, 1), reference_curve(:, 2), ...
+                    'Color', [0.9, 0.0, 0.0], 'LineStyle', '-', ...
+                    'LineWidth', 2.0, 'HandleVisibility', 'off');
+            end
+        end
+    end
+    for idx = 1:max_curves
+        anchor_curve = squeeze(reconstructed_points(anchor_idx, idx, :));
+        if idx == 1
+            plot(anchor_curve(:, 1), anchor_curve(:, 2), 'ks-', ...
+                'LineWidth', 1.5, 'MarkerSize', 7, ...
+                'MarkerFaceColor', 'w', ...
+                'DisplayName', 'Stage 1 fixed anchors');
+        else
+            plot(anchor_curve(:, 1), anchor_curve(:, 2), 'ks-', ...
+                'LineWidth', 1.0, 'MarkerSize', 5, ...
+                'MarkerFaceColor', 'w', ...
+                'HandleVisibility', 'off');
+        end
+    end
 end
 grid on;
 axis equal;
+xlim(x_limits);
+ylim(y_limits);
 xlabel('x');
 ylabel('y');
-title('10D ODE Rollout Trajectories');
+if cfg.run_second_level
+    title(sprintf('10D ODE Rollout Trajectories (%d Points, %d Samples)', ...
+        size(reconstructed_points, 1), max_curves));
+    legend('Location', 'best');
+else
+    title('10D ODE Rollout Trajectories');
+end
 
 exportgraphics(fig, output_path, 'ContentType', 'vector');
 end

@@ -9,7 +9,7 @@ from distributions import sample_source, sample_target
 from flow_matching import build_training_data
 from gp_model import TimeSliceGPCollection
 from sampler import rk4_rollout
-from visualization import plot_results
+from visualization import plot_results, plot_variance_vs_time
 
 
 def main() -> None:
@@ -23,7 +23,7 @@ def main() -> None:
 
     x0_train = sample_source(training_config.n_train, rng)
     x1_train = sample_target(training_config.n_train, mixture_config, rng)
-    slice_times, x_slices, y_slices, x_train, y_train = build_training_data(
+    t_slices, x_slices, y_slices, x_train, y_train = build_training_data(
         x0_train,
         x1_train,
         training_config.n_time_slices,
@@ -32,7 +32,7 @@ def main() -> None:
     )
 
     model = TimeSliceGPCollection(gp_config)
-    model.fit(slice_times, x_slices, y_slices)
+    model.fit(t_slices, x_slices, y_slices)
 
     x0_eval = sample_source(sampling_config.n_generated, rng)
     _, rollout_path = rk4_rollout(
@@ -67,6 +67,7 @@ def main() -> None:
     grid_x, grid_y = np.meshgrid(axis_grid, axis_grid)
     output_dir = os.path.join(this_dir, "outputs")
     output_path = os.path.join(output_dir, "gp_flow_matching_demo.png")
+    variance_plot_path = os.path.join(output_dir, "trajectory_gp_variance_vs_time.png")
     os.makedirs(output_dir, exist_ok=True)
     plot_results(
         output_path=output_path,
@@ -78,6 +79,12 @@ def main() -> None:
         x_train=x_train,
         y_train=y_train,
         random_seed=training_config.random_seed,
+    )
+    plot_variance_vs_time(
+        output_path=variance_plot_path,
+        traj_times=traj_times,
+        traj_gp_vars=traj_gp_vars,
+        sigma2_max=variance_constraint_config.sigma2_max,
     )
     np.savetxt(
         os.path.join(output_dir, "generated_samples.csv"),
@@ -125,6 +132,7 @@ def main() -> None:
     print("Total training pairs:", x_train.shape[0])
     print("Generated samples:", sampling_config.n_generated)
     print("Output figure:", os.path.abspath(output_path))
+    print("Variance-vs-time figure:", os.path.abspath(variance_plot_path))
     print("Variance constraint enabled:", variance_constraint_config.enabled)
     print("Variance threshold sigma^2_max:", variance_constraint_config.sigma2_max)
     print("Generated mean:", np.mean(generated_samples, axis=0))

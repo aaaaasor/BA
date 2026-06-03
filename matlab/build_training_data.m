@@ -3,7 +3,7 @@
 % [x1; y1; x2; y2; ...].
 function [s_slices, x_slices, y_slices, target_points, source_points, ...
     target_data, source_data, trajectory_t_slices, data_transform] = build_training_data( ...
-    mat_path, t_min, t_max, max_trajectories, n_s_slices)
+    mat_path, t_min, t_max, max_trajectories, n_s_slices, target_points_input)
 %% Default Arguments
 if nargin < 2
     t_min = 0.0;
@@ -16,15 +16,20 @@ if nargin < 5 || isempty(n_s_slices)
 end
 
 %% Load Target Trajectories
-loaded_data = load(mat_path, 'data_train');
-if ~isfield(loaded_data, 'data_train')
-    error('The MAT file does not contain the variable data_train.');
-end
-
-target_data = double(loaded_data.data_train);
-if nargin >= 4 && ~isempty(max_trajectories)
-    max_trajectories = min(max_trajectories, size(target_data, 2));
-    target_data = target_data(:, 1:max_trajectories);
+if nargin >= 6 && ~isempty(target_points_input)
+    target_points_input = double(target_points_input);
+    target_data = reshape(permute(target_points_input, [3, 1, 2]), ...
+        [], size(target_points_input, 2));
+else
+    loaded_data = load(mat_path, 'data_train');
+    if ~isfield(loaded_data, 'data_train')
+        error('The MAT file does not contain the variable data_train.');
+    end
+    target_data = double(loaded_data.data_train);
+    if nargin >= 4 && ~isempty(max_trajectories)
+        max_trajectories = min(max_trajectories, size(target_data, 2));
+        target_data = target_data(:, 1:max_trajectories);
+    end
 end
 
 %% Dimension Checks

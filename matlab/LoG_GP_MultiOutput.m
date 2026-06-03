@@ -283,7 +283,7 @@ classdef LoG_GP_MultiOutput < handle
 						lcount = lcount+1;
 						iL(lcount) = i;
 					elseif xD >= mP - o/2 && xD <= mP + o/2 %if in overlapping
-						pL = 0.5 + (xD - mP) / o;
+						pL = 0.5 - (xD - mP) / o;
 						if pL>=rand() %left side
 							lcount = lcount+1;
 							iL(lcount) = i;
@@ -330,7 +330,7 @@ classdef LoG_GP_MultiOutput < handle
 			if xD < mP - o/2
 				pL = 1;
 			elseif  xD >= mP - o/2 && xD <= mP + o/2 %if in overlapping
-				pL = 0.5 + (xD - mP) / o;
+				pL = 0.5 - (xD - mP) / o;
 				if(pL <= 1e-12)%avoid numerical errors
 					pL = 0;
 				elseif(pL >= 1 - 1e-12)

@@ -85,3 +85,29 @@ def plot_results(
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     fig.savefig(output_path, dpi=180, bbox_inches="tight")
     plt.close(fig)
+
+
+def plot_variance_vs_time(
+    output_path: str,
+    traj_times: np.ndarray,
+    traj_gp_vars: np.ndarray,
+    sigma2_max: float,
+) -> None:
+    fig, ax = plt.subplots(figsize=(9, 5.5))
+    scalar_vars = traj_gp_vars[:, :, 0]
+
+    for idx in range(scalar_vars.shape[1]):
+        ax.plot(traj_times, scalar_vars[:, idx], color="tab:blue", alpha=0.35, linewidth=1.1)
+
+    ax.axhline(sigma2_max, color="tab:red", linestyle="--", linewidth=1.6, label=r"$\bar{\sigma}^2$")
+    ax.set_title("Posterior Variance Along Rollout Trajectories")
+    ax.set_xlabel("t")
+    ax.set_ylabel("posterior variance")
+    ax.set_yscale("log")
+    ax.grid(alpha=0.25)
+    ax.legend()
+
+    fig.tight_layout()
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    fig.savefig(output_path, dpi=180, bbox_inches="tight")
+    plt.close(fig)

@@ -1,8 +1,65 @@
-% Estimate LocalGP kernel hyperparameters with MATLAB fitrgp.
+% Estimate LoG-GP kernel hyperparameters with MATLAB fitrgp.
 function gp = optimize_gp_hyperparameters(x_slices, y_slices, gp, s_slices)
 %% Optional Optimization
 if ~isfield(gp, 'optimize_hyperparameters') || ~gp.optimize_hyperparameters
     return;
+end
+
+%% Expected Input Dimension
+x_dim = size(x_slices, 3);
+y_dim = size(y_slices, 3);
+input_dim = x_dim;
+if nargin >= 4 && ~isempty(s_slices)
+    input_dim = input_dim + 1;
+end
+
+%% Load Saved Hyperparameters
+reuse_saved_hyperparameters = true;
+if isfield(gp, 'reuse_saved_hyperparameters') && ...
+        ~isempty(gp.reuse_saved_hyperparameters)
+    reuse_saved_hyperparameters = gp.reuse_saved_hyperparameters;
+end
+hyperparameter_mat_path = "";
+if isfield(gp, 'hyperparameter_mat_path') && ~isempty(gp.hyperparameter_mat_path)
+    hyperparameter_mat_path = string(gp.hyperparameter_mat_path);
+    if ~isfile(hyperparameter_mat_path)
+        this_file = mfilename('fullpath');
+        hyperparameter_mat_path = fullfile(fileparts(this_file), ...
+            hyperparameter_mat_path);
+    end
+end
+if reuse_saved_hyperparameters && strlength(hyperparameter_mat_path) > 0 && ...
+        isfile(hyperparameter_mat_path)
+    fprintf('Checking saved hyperparameters: %s\n', hyperparameter_mat_path);
+    saved_params = load(hyperparameter_mat_path, ...
+        'SigmaF', 'SigmaL', 'SigmaN');
+    if isfield(saved_params, 'SigmaF') && isfield(saved_params, 'SigmaL') && ...
+            isfield(saved_params, 'SigmaN')
+        sigma_l_size = size(saved_params.SigmaL);
+        use_per_output = isfield(gp, 'use_per_output_models') && ...
+            gp.use_per_output_models;
+        has_per_output = use_per_output && numel(sigma_l_size) == 2 && ...
+            sigma_l_size(1) == input_dim && sigma_l_size(2) == y_dim;
+        has_shared = ~use_per_output && numel(saved_params.SigmaL) == input_dim;
+        if has_per_output || has_shared
+            if has_per_output
+                gp.length_scale_mat = saved_params.SigmaL;
+                gp.signal_std_vec = saved_params.SigmaF(:)';
+                gp.noise_std_vec = saved_params.SigmaN(:)';
+                gp.length_scale_vec = median(gp.length_scale_mat, 2);
+                gp.signal_std = median(gp.signal_std_vec);
+                gp.noise_std = median(gp.noise_std_vec);
+            else
+                gp.length_scale_vec = saved_params.SigmaL(:);
+                gp.signal_std = saved_params.SigmaF;
+                gp.noise_std = saved_params.SigmaN;
+            end
+            fprintf('Loaded saved hyperparameters with input dimension %d.\n', input_dim);
+            return;
+        end
+        warning(['Saved hyperparameter dimension does not match current ', ...
+            'training data. Recomputing fitrgp hyperparameters.']);
+    end
 end
 if exist('fitrgp', 'file') ~= 2
     warning('fitrgp is not available. Keeping configured GP hyperparameters.');
@@ -10,8 +67,6 @@ if exist('fitrgp', 'file') ~= 2
 end
 
 %% Flatten Flow-Matching Training Pairs
-x_dim = size(x_slices, 3);
-y_dim = size(y_slices, 3);
 X = reshape(x_slices, [], x_dim);
 Y = reshape(y_slices, [], y_dim);
 if nargin >= 4 && ~isempty(s_slices)
@@ -29,10 +84,11 @@ end
 
 %% Pretrain Subset
 if ~isfield(gp, 'n_pretrain') || isempty(gp.n_pretrain)
-    gp.n_pretrain = 10000;
+    gp.n_pretrain = size(X, 1);
 end
 n_pretrain = min(gp.n_pretrain, size(X, 1));
 pretrain_idx = randperm(size(X, 1), n_pretrain);
+fprintf('fitrgp pretrain samples: %d / %d\n', n_pretrain, size(X, 1));
 
 if ~isfield(gp, 'pretrain_output_idx') || isempty(gp.pretrain_output_idx)
     output_idx_set = 1:y_dim;
@@ -50,6 +106,9 @@ valid_fit = false(1, n_outputs);
 
 for fit_idx = 1:n_outputs
     output_idx = output_idx_set(fit_idx);
+    fprintf('Running fitrgp for output %d (%d/%d)...\n', ...
+        output_idx, fit_idx, n_outputs);
+    fit_tic = tic;
     try
         gp_model = fitrgp(X(pretrain_idx, :), Y(pretrain_idx, output_idx), ...
             'KernelFunction', 'ardsquaredexponential', ...
@@ -64,6 +123,7 @@ for fit_idx = 1:n_outputs
     sigma_f_set(fit_idx) = kernel_parameters(end);
     sigma_n_set(fit_idx) = gp_model.Sigma;
     valid_fit(fit_idx) = true;
+    fprintf('Finished output %d in %.1f seconds.\n', output_idx, toc(fit_tic));
 end
 
 if ~any(valid_fit)
@@ -71,20 +131,42 @@ if ~any(valid_fit)
     return;
 end
 
-gp.length_scale_vec = median(sigma_l_set(:, valid_fit), 2);
-gp.signal_std = median(sigma_f_set(valid_fit));
-gp.noise_std = median(sigma_n_set(valid_fit));
+use_per_output = isfield(gp, 'use_per_output_models') && ...
+    gp.use_per_output_models;
+if use_per_output
+    gp.length_scale_mat = repmat(median(sigma_l_set(:, valid_fit), 2), ...
+        1, y_dim);
+    gp.signal_std_vec = median(sigma_f_set(valid_fit)) * ones(1, y_dim);
+    gp.noise_std_vec = median(sigma_n_set(valid_fit)) * ones(1, y_dim);
+    gp.length_scale_mat(:, output_idx_set(valid_fit)) = sigma_l_set(:, valid_fit);
+    gp.signal_std_vec(output_idx_set(valid_fit)) = sigma_f_set(valid_fit);
+    gp.noise_std_vec(output_idx_set(valid_fit)) = sigma_n_set(valid_fit);
 
-if isfield(gp, 'length_scale_bounds') && numel(gp.length_scale_bounds) == 2
-    gp.length_scale_vec = min(max(gp.length_scale_vec, ...
-        gp.length_scale_bounds(1)), gp.length_scale_bounds(2));
+    gp.length_scale_vec = median(gp.length_scale_mat, 2);
+    gp.signal_std = median(gp.signal_std_vec);
+    gp.noise_std = median(gp.noise_std_vec);
+else
+    gp.length_scale_vec = median(sigma_l_set(:, valid_fit), 2);
+    gp.signal_std = median(sigma_f_set(valid_fit));
+    gp.noise_std = median(sigma_n_set(valid_fit));
 end
-if isfield(gp, 'signal_std_bounds') && numel(gp.signal_std_bounds) == 2
-    gp.signal_std = min(max(gp.signal_std, ...
-        gp.signal_std_bounds(1)), gp.signal_std_bounds(2));
-end
-if isfield(gp, 'noise_std_bounds') && numel(gp.noise_std_bounds) == 2
-    gp.noise_std = min(max(gp.noise_std, ...
-        gp.noise_std_bounds(1)), gp.noise_std_bounds(2));
+
+%% Save Hyperparameters
+if strlength(hyperparameter_mat_path) > 0
+    hyperparameter_dir = fileparts(hyperparameter_mat_path);
+    if ~exist(hyperparameter_dir, 'dir')
+        mkdir(hyperparameter_dir);
+    end
+    if use_per_output
+        SigmaL = gp.length_scale_mat;
+        SigmaF = gp.signal_std_vec;
+        SigmaN = gp.noise_std_vec;
+    else
+        SigmaL = gp.length_scale_vec;
+        SigmaF = gp.signal_std;
+        SigmaN = gp.noise_std;
+    end
+    save(hyperparameter_mat_path, 'SigmaF', 'SigmaL', 'SigmaN');
+    fprintf('Saved hyperparameters: %s\n', hyperparameter_mat_path);
 end
 end
