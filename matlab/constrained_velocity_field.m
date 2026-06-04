@@ -9,7 +9,7 @@ end
 fixed_mask = reshape(fixed_mask, [], 1);
 model = model_collection.model;
 gp_input = [t; x_col];
-if nargin < 4 || ~constraint_cfg.enabled
+if nargin < 4
     v = predict_mean_velocity(model, gp_input);
     return;
 end

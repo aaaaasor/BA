@@ -5,7 +5,7 @@ function [times, path] = rk4_rollout(model_collection, ...
 
 %% Default Arguments
 if nargin < 6
-    constraint_cfg.enabled = false;
+    error('PT-CBF constraint configuration is required.');
 end
 if nargin < 7 || isempty(fixed_state_mask)
     fixed_state_mask = false(size(x_init));

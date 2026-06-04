@@ -36,8 +36,7 @@ if reuse_saved_hyperparameters && strlength(hyperparameter_mat_path) > 0 && ...
     if isfield(saved_params, 'SigmaF') && isfield(saved_params, 'SigmaL') && ...
             isfield(saved_params, 'SigmaN')
         sigma_l_size = size(saved_params.SigmaL);
-        use_per_output = isfield(gp, 'use_per_output_models') && ...
-            gp.use_per_output_models;
+        use_per_output = true;
         has_per_output = use_per_output && numel(sigma_l_size) == 2 && ...
             sigma_l_size(1) == input_dim && sigma_l_size(2) == y_dim;
         has_shared = ~use_per_output && numel(saved_params.SigmaL) == input_dim;
@@ -131,28 +130,26 @@ if ~any(valid_fit)
     return;
 end
 
-use_per_output = isfield(gp, 'use_per_output_models') && ...
-    gp.use_per_output_models;
-if use_per_output
-    gp.length_scale_mat = repmat(median(sigma_l_set(:, valid_fit), 2), ...
-        1, y_dim);
-    gp.signal_std_vec = median(sigma_f_set(valid_fit)) * ones(1, y_dim);
-    gp.noise_std_vec = median(sigma_n_set(valid_fit)) * ones(1, y_dim);
-    gp.length_scale_mat(:, output_idx_set(valid_fit)) = sigma_l_set(:, valid_fit);
-    gp.signal_std_vec(output_idx_set(valid_fit)) = sigma_f_set(valid_fit);
-    gp.noise_std_vec(output_idx_set(valid_fit)) = sigma_n_set(valid_fit);
+use_per_output = true;
+gp.length_scale_mat = repmat(median(sigma_l_set(:, valid_fit), 2), ...
+    1, y_dim);
+gp.signal_std_vec = median(sigma_f_set(valid_fit)) * ones(1, y_dim);
+gp.noise_std_vec = median(sigma_n_set(valid_fit)) * ones(1, y_dim);
+gp.length_scale_mat(:, output_idx_set(valid_fit)) = sigma_l_set(:, valid_fit);
+gp.signal_std_vec(output_idx_set(valid_fit)) = sigma_f_set(valid_fit);
+gp.noise_std_vec(output_idx_set(valid_fit)) = sigma_n_set(valid_fit);
 
-    gp.length_scale_vec = median(gp.length_scale_mat, 2);
-    gp.signal_std = median(gp.signal_std_vec);
-    gp.noise_std = median(gp.noise_std_vec);
-else
-    gp.length_scale_vec = median(sigma_l_set(:, valid_fit), 2);
-    gp.signal_std = median(sigma_f_set(valid_fit));
-    gp.noise_std = median(sigma_n_set(valid_fit));
-end
+gp.length_scale_vec = median(gp.length_scale_mat, 2);
+gp.signal_std = median(gp.signal_std_vec);
+gp.noise_std = median(gp.noise_std_vec);
 
 %% Save Hyperparameters
-if strlength(hyperparameter_mat_path) > 0
+save_hyperparameters = true;
+if isfield(gp, 'save_hyperparameters') && ...
+        ~isempty(gp.save_hyperparameters)
+    save_hyperparameters = gp.save_hyperparameters;
+end
+if save_hyperparameters && strlength(hyperparameter_mat_path) > 0
     hyperparameter_dir = fileparts(hyperparameter_mat_path);
     if ~exist(hyperparameter_dir, 'dir')
         mkdir(hyperparameter_dir);
@@ -168,5 +165,7 @@ if strlength(hyperparameter_mat_path) > 0
     end
     save(hyperparameter_mat_path, 'SigmaF', 'SigmaL', 'SigmaN');
     fprintf('Saved hyperparameters: %s\n', hyperparameter_mat_path);
+elseif ~save_hyperparameters
+    fprintf('Hyperparameter saving disabled for this run.\n');
 end
 end

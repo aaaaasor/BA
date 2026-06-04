@@ -11,7 +11,9 @@ end
 this_file = mfilename('fullpath');
 this_dir = fileparts(this_file);
 output_dir = fullfile(this_dir, 'outputs');
-if ~exist(output_dir, 'dir')
+output_enabled = ~isfield(cfg, 'output') || ...
+    ~isfield(cfg.output, 'enabled') || cfg.output.enabled;
+if output_enabled && ~exist(output_dir, 'dir')
     mkdir(output_dir);
 end
 output_path = fullfile(output_dir, ...
@@ -38,5 +40,7 @@ xlabel('s');
 ylabel('LoG-GP predictive uncertainty');
 title(plot_title);
 legend('Location', 'best');
-exportgraphics(fig, output_path, 'ContentType', 'vector');
+if output_enabled
+    exportgraphics(fig, output_path, 'ContentType', 'vector');
+end
 end

@@ -16,133 +16,83 @@ X = [s_column, X_state];
 valid_rows = all(isfinite(X), 2) & all(isfinite(Y), 2);
 X = X(valid_rows, :);
 Y = Y(valid_rows, :);
-if isfield(gp, 'max_training_pairs') && ~isempty(gp.max_training_pairs) && ...
-        gp.max_training_pairs < size(X, 1)
-    if isfield(gp, 'training_subset_seed') && ...
-            ~isempty(gp.training_subset_seed)
-        rng(gp.training_subset_seed);
-    end
-    subset_idx = randperm(size(X, 1), gp.max_training_pairs);
-    X = X(subset_idx, :);
-    Y = Y(subset_idx, :);
-    fprintf('LoG-GP quick training subset: %d pairs\n', size(X, 1));
-end
 fprintf('LoG-GP fitting pairs: %d, input dim: %d, output dim: %d\n', ...
     size(X, 1), input_dim, y_dim);
 
 %% LoG-GP Models
-selective_training = isfield(gp, 'selective_training_enabled') && ...
-    gp.selective_training_enabled;
 if isfield(gp, 'training_accuracy_threshold') && ...
         ~isempty(gp.training_accuracy_threshold)
     training_accuracy_threshold = gp.training_accuracy_threshold;
 else
     training_accuracy_threshold = inf;
 end
-use_per_output = isfield(gp, 'use_per_output_models') && ...
-    gp.use_per_output_models;
-if use_per_output
-    per_output_training_threshold = training_accuracy_threshold / sqrt(y_dim);
-    fprintf('Per-output training uncertainty threshold: %.4g\n', ...
-        per_output_training_threshold);
-    output_models = cell(y_dim, 1);
+per_output_training_threshold = training_accuracy_threshold / sqrt(y_dim);
+fprintf('Per-output training uncertainty threshold: %.4g\n', ...
+    per_output_training_threshold);
+output_models = cell(y_dim, 1);
+for output_idx = 1:y_dim
+    output_models{output_idx} = create_loggp_model(gp, input_dim, ...
+        x_dim, 1, output_idx);
+end
+added_counts = zeros(y_dim, 1);
+skipped_counts = zeros(y_dim, 1);
+training_added_mask = false(size(Y));
+
+for point_idx = 1:size(X, 1)
     for output_idx = 1:y_dim
-        output_models{output_idx} = create_loggp_model(gp, input_dim, ...
-            x_dim, 1, output_idx);
-    end
-    added_counts = zeros(y_dim, 1);
-    skipped_counts = zeros(y_dim, 1);
-    training_added_mask = false(size(Y));
-    for point_idx = 1:size(X, 1)
-        for output_idx = 1:y_dim
-            should_add = true;
-            if selective_training && output_models{output_idx}.DataQuantity > 0
-                [~, variance_now] = ...
-                    output_models{output_idx}.predict_variance_grad( ...
-                    X(point_idx, :)');
-                should_add = sqrt(max(variance_now, 0.0)) > ...
-                    per_output_training_threshold;
-            end
-            if ~should_add
-                skipped_counts(output_idx) = skipped_counts(output_idx) + 1;
-                continue;
-            end
-            flag = output_models{output_idx}.update(X(point_idx, :)', ...
-                Y(point_idx, output_idx), false);
-            if flag == -3 && point_idx < size(X, 1)
-                warning(['LoG-GP data capacity reached for output %d. ', ...
-                    'Remaining data are ignored.'], output_idx);
-            else
-                added_counts(output_idx) = added_counts(output_idx) + 1;
-                training_added_mask(point_idx, output_idx) = true;
-            end
-        end
-        if mod(point_idx, 10000) == 0 || point_idx == size(X, 1)
-            fprintf(['  Processed %d / %d LoG-GP pairs; added %d, ', ...
-                'skipped %d...\n'], point_idx, size(X, 1), ...
-                sum(added_counts), sum(skipped_counts));
-        end
-    end
-    fprintf('  Added per output: %s\n', mat2str(added_counts'));
-    fprintf('  Skipped per output: %s\n', mat2str(skipped_counts'));
-    model.output_models = output_models;
-    model.local_gp = output_models{1};
-    n_added_pairs = sum(added_counts);
-    n_skipped_pairs = sum(skipped_counts);
-    n_added_per_output = added_counts;
-    n_skipped_per_output = skipped_counts;
-else
-    local_gp = create_loggp_model(gp, input_dim, x_dim, y_dim, 1);
-    added_count = 0;
-    skipped_count = 0;
-    training_added_mask = false(size(Y));
-    for point_idx = 1:size(X, 1)
         should_add = true;
-        if selective_training && local_gp.DataQuantity > 0
-            [~, variance_now] = local_gp.predict_variance_grad( ...
+        if output_models{output_idx}.DataQuantity > 0
+            [~, variance_now] = ...
+                output_models{output_idx}.predict_variance_grad( ...
                 X(point_idx, :)');
-            should_add = sqrt(max(sum(variance_now(:)), 0.0)) > ...
-                training_accuracy_threshold;
+            should_add = sqrt(max(variance_now, 0.0)) > ...
+                per_output_training_threshold;
         end
         if ~should_add
-            skipped_count = skipped_count + 1;
+            skipped_counts(output_idx) = skipped_counts(output_idx) + 1;
             continue;
         end
-        flag = local_gp.update(X(point_idx, :)', Y(point_idx, :)', false);
-        if flag == -3
-            if point_idx < size(X, 1)
-                warning('LoG-GP data capacity reached. Remaining data are ignored.');
-            end
-            break;
+        flag = output_models{output_idx}.update(X(point_idx, :)', ...
+            Y(point_idx, output_idx), false);
+        if flag == -3 && point_idx < size(X, 1)
+            warning(['LoG-GP data capacity reached for output %d. ', ...
+                'Remaining data are ignored.'], output_idx);
         else
-            added_count = added_count + 1;
-            training_added_mask(point_idx, :) = true;
-        end
-        if mod(point_idx, 10000) == 0 || point_idx == size(X, 1)
-            fprintf(['  Processed %d / %d LoG-GP pairs; added %d, ', ...
-                'skipped %d...\n'], point_idx, size(X, 1), ...
-                added_count, skipped_count);
+            added_counts(output_idx) = added_counts(output_idx) + 1;
+            training_added_mask(point_idx, output_idx) = true;
         end
     end
-    fprintf('  Added pairs: %d, skipped pairs: %d\n', ...
-        added_count, skipped_count);
-    model.local_gp = local_gp;
-    n_added_pairs = added_count;
-    n_skipped_pairs = skipped_count;
-    n_added_per_output = added_count;
-    n_skipped_per_output = skipped_count;
+    if mod(point_idx, 10000) == 0 || point_idx == size(X, 1)
+        fprintf(['  Processed %d / %d LoG-GP pairs; added %d, ', ...
+            'skipped %d...\n'], point_idx, size(X, 1), ...
+            sum(added_counts), sum(skipped_counts));
+    end
 end
+fprintf('  Added per output: %s\n', mat2str(added_counts'));
+fprintf('  Skipped per output: %s\n', mat2str(skipped_counts'));
+model_collection = build_model_collection(s_slices, output_models, ...
+    added_counts, skipped_counts, training_added_mask, n_slices, ...
+    size(X, 1), y_dim);
+end
+
+function model_collection = build_model_collection(s_slices, output_models, ...
+    added_counts, skipped_counts, training_added_mask, n_slices, ...
+    n_training_pairs, y_dim)
+model.output_models = output_models;
+model.local_gp = output_models{1};
+n_added_pairs = sum(added_counts);
+n_skipped_pairs = sum(skipped_counts);
 model_collection.model_type = 'loggp';
 model_collection.s_slices = s_slices;
 model_collection.model = model;
 model_collection.n_slices = n_slices;
-model_collection.n_training_pairs = size(X, 1);
+model_collection.n_training_pairs = n_training_pairs;
 model_collection.n_added_pairs = n_added_pairs;
 model_collection.n_skipped_pairs = n_skipped_pairs;
 model_collection.n_added_scalar_updates = n_added_pairs;
 model_collection.n_skipped_scalar_updates = n_skipped_pairs;
-model_collection.n_added_per_output = n_added_per_output;
-model_collection.n_skipped_per_output = n_skipped_per_output;
+model_collection.n_added_per_output = added_counts;
+model_collection.n_skipped_per_output = skipped_counts;
 model_collection.y_dim = y_dim;
 model_collection.training_added_mask = training_added_mask;
 end

@@ -5,10 +5,15 @@ function output_path = animate_single_trajectory(cfg, rollout_times, ...
 this_file = mfilename('fullpath');
 this_dir = fileparts(this_file);
 output_dir = fullfile(this_dir, 'outputs');
-if ~exist(output_dir, 'dir')
+output_enabled = ~isfield(cfg, 'output') || ...
+    ~isfield(cfg.output, 'enabled') || cfg.output.enabled;
+if output_enabled && ~exist(output_dir, 'dir')
     mkdir(output_dir);
 end
 output_path = fullfile(output_dir, 'single_trajectory_rollout.gif');
+if ~output_enabled
+    output_path = "";
+end
 
 %% Plot Limits
 all_rollout_points = reshape(traj_path_single', 2, [])';
@@ -72,12 +77,14 @@ for frame_nr = 1:numel(frame_idx_set)
     frame = getframe(fig);
     [image_rgb, ~] = frame2im(frame);
     [image_indexed, color_map] = rgb2ind(image_rgb, 256);
-    if frame_nr == 1
-        imwrite(image_indexed, color_map, output_path, 'gif', ...
-            'LoopCount', inf, 'DelayTime', cfg.animation.delay_time);
-    else
-        imwrite(image_indexed, color_map, output_path, 'gif', ...
-            'WriteMode', 'append', 'DelayTime', cfg.animation.delay_time);
+    if output_enabled
+        if frame_nr == 1
+            imwrite(image_indexed, color_map, output_path, 'gif', ...
+                'LoopCount', inf, 'DelayTime', cfg.animation.delay_time);
+        else
+            imwrite(image_indexed, color_map, output_path, 'gif', ...
+                'WriteMode', 'append', 'DelayTime', cfg.animation.delay_time);
+        end
     end
 end
 end

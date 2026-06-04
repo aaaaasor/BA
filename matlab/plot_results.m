@@ -4,7 +4,9 @@ function plot_results(cfg, target_points, source_points, reconstructed_points)
 this_file = mfilename('fullpath');
 this_dir = fileparts(this_file);
 output_dir = fullfile(this_dir, 'outputs');
-if ~exist(output_dir, 'dir')
+output_enabled = ~isfield(cfg, 'output') || ...
+    ~isfield(cfg.output, 'enabled') || cfg.output.enabled;
+if output_enabled && ~exist(output_dir, 'dir')
     mkdir(output_dir);
 end
 output_path = fullfile(output_dir, 'gp_flow_matching_demo_matlab.emf');
@@ -63,29 +65,22 @@ title('10D ODE Source Trajectories');
 nexttile;
 hold on;
 max_curves = min(size(reconstructed_points, 2), cfg.n_trajectories);
-if cfg.run_second_level
-    fprintf('Plotting second-level rollout sample curves: %d / %d\n', ...
-        max_curves, size(reconstructed_points, 2));
-end
+fprintf('Plotting second-level rollout sample curves: %d / %d\n', ...
+    max_curves, size(reconstructed_points, 2));
 rollout_colors = lines(max(max_curves, 1));
 for idx = 1:max_curves
     reconstructed_curve = squeeze(reconstructed_points(:, idx, :));
-    if cfg.run_second_level
-        if idx == 1
-            plot(reconstructed_curve(:, 1), reconstructed_curve(:, 2), ...
-                'Color', rollout_colors(idx, :), 'LineWidth', 1.1, ...
-                'DisplayName', 'Stage 2 sample curves');
-        else
-            plot(reconstructed_curve(:, 1), reconstructed_curve(:, 2), ...
-                'Color', rollout_colors(idx, :), 'LineWidth', 1.1, ...
-                'HandleVisibility', 'off');
-        end
+    if idx == 1
+        plot(reconstructed_curve(:, 1), reconstructed_curve(:, 2), ...
+            'Color', rollout_colors(idx, :), 'LineWidth', 1.1, ...
+            'DisplayName', 'Stage 2 sample curves');
     else
         plot(reconstructed_curve(:, 1), reconstructed_curve(:, 2), ...
-            'LineWidth', 0.9);
+            'Color', rollout_colors(idx, :), 'LineWidth', 1.1, ...
+            'HandleVisibility', 'off');
     end
 end
-if cfg.run_second_level && max_curves > 0
+if max_curves > 0
     anchor_idx = 1:(cfg.segment_points_per_segment - 1): ...
         size(reconstructed_points, 1);
     refined_idx = setdiff(1:size(reconstructed_points, 1), anchor_idx);
@@ -152,13 +147,11 @@ xlim(x_limits);
 ylim(y_limits);
 xlabel('x');
 ylabel('y');
-if cfg.run_second_level
-    title(sprintf('10D ODE Rollout Trajectories (%d Points, %d Samples)', ...
-        size(reconstructed_points, 1), max_curves));
-    legend('Location', 'best');
-else
-    title('10D ODE Rollout Trajectories');
-end
+title(sprintf('10D ODE Rollout Trajectories (%d Points, %d Samples)', ...
+    size(reconstructed_points, 1), max_curves));
+legend('Location', 'best');
 
-exportgraphics(fig, output_path, 'ContentType', 'vector');
+if output_enabled
+    exportgraphics(fig, output_path, 'ContentType', 'vector');
+end
 end
