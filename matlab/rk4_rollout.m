@@ -5,7 +5,7 @@ function [times, path] = rk4_rollout(model_collection, ...
 
 %% Default Arguments
 if nargin < 6
-    error('PT-CBF constraint configuration is required.');
+    constraint_cfg = [];
 end
 if nargin < 7 || isempty(fixed_state_mask)
     fixed_state_mask = false(size(x_init));
@@ -29,6 +29,7 @@ if isvector(fixed_state_values)
 end
 path = zeros(n_steps + 1, n_samples, state_dim);
 path(1, :, :) = reshape(x_init, 1, n_samples, state_dim);
+use_constraint = ~isempty(constraint_cfg);
 
 %% RK4 Integration
 for sample_idx = 1:n_samples
@@ -39,24 +40,25 @@ for sample_idx = 1:n_samples
     path(1, sample_idx, :) = x_now;
     for step_idx = 1:n_steps
         t_now = times(step_idx);
-        k1 = constrained_velocity_field(model_collection, t_now, x_now, ...
-            constraint_cfg, fixed_mask_now);
+        k1 = rollout_velocity(model_collection, t_now, x_now, ...
+            constraint_cfg, fixed_mask_now, use_constraint);
         k1(fixed_mask_now) = 0.0;
-        k2 = constrained_velocity_field(model_collection, ...
+        k2 = rollout_velocity(model_collection, ...
             t_now + 0.5 * dt, ...
             apply_fixed_state_values(x_now + 0.5 * dt * k1, ...
             fixed_mask_now, fixed_values_now), constraint_cfg, ...
-            fixed_mask_now);
+            fixed_mask_now, use_constraint);
         k2(fixed_mask_now) = 0.0;
-        k3 = constrained_velocity_field(model_collection, ...
+        k3 = rollout_velocity(model_collection, ...
             t_now + 0.5 * dt, ...
             apply_fixed_state_values(x_now + 0.5 * dt * k2, ...
             fixed_mask_now, fixed_values_now), constraint_cfg, ...
-            fixed_mask_now);
+            fixed_mask_now, use_constraint);
         k3(fixed_mask_now) = 0.0;
-        k4 = constrained_velocity_field(model_collection, t_now + dt, ...
+        k4 = rollout_velocity(model_collection, t_now + dt, ...
             apply_fixed_state_values(x_now + dt * k3, fixed_mask_now, ...
-            fixed_values_now), constraint_cfg, fixed_mask_now);
+            fixed_values_now), constraint_cfg, fixed_mask_now, ...
+            use_constraint);
         k4(fixed_mask_now) = 0.0;
         x_now = x_now + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4);
         x_now(fixed_mask_now) = fixed_values_now(fixed_mask_now);
@@ -65,6 +67,16 @@ for sample_idx = 1:n_samples
     if mod(sample_idx, 10) == 0 || sample_idx == n_samples
         fprintf('  RK4 rolled out %d / %d samples...\n', sample_idx, n_samples);
     end
+end
+end
+
+function v = rollout_velocity(model_collection, t, x, constraint_cfg, ...
+    fixed_mask, use_constraint)
+if use_constraint
+    v = constrained_velocity_field(model_collection, t, x, ...
+        constraint_cfg, fixed_mask);
+else
+    v = constrained_velocity_field(model_collection, t, x);
 end
 end
 

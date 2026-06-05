@@ -27,16 +27,23 @@ if isfield(model, 'output_models')
         variance_set(output_idx) = variance_now;
         grad_set(output_idx, :) = grad_now;
     end
-    variance_now = sqrt(max(sum(variance_set), 0.0));
-    if variance_now > eps
-        grad_all = sum(grad_set, 1) ./ (2.0 * variance_now);
+    uncertainty_now = sqrt(max(sum(variance_set), 0.0));
+    if uncertainty_now > eps
+        grad_all = sum(grad_set, 1) ./ (2.0 * uncertainty_now);
     else
         grad_all = zeros(1, numel(gp_input));
     end
 else
-    [mu, variance_now, grad_all] = model.local_gp.predict_variance_grad(gp_input);
+    [mu, variance_now, variance_grad] = ...
+        model.local_gp.predict_variance_grad(gp_input);
+    uncertainty_now = sqrt(max(variance_now, 0.0));
+    if uncertainty_now > eps
+        grad_all = variance_grad ./ (2.0 * uncertainty_now);
+    else
+        grad_all = zeros(1, numel(gp_input));
+    end
 end
-variance_t = grad_all(1);
+uncertainty_t = grad_all(1);
 grad_x = grad_all(2:end);
 grad_x(fixed_mask') = 0.0;
 mu = reshape(mu, [], 1);
@@ -45,8 +52,14 @@ mu = reshape(mu, [], 1);
 normalized_t = min(max(t, 0.0), 1.0);
 remaining = 1.0 - normalized_t;
 phi_t = constraint_cfg.omega_gain / (remaining ^ 2);
-h = constraint_cfg.sigma2_max - variance_now;
-rhs = phi_t * constraint_cfg.alpha_gain * h - variance_t - sum(grad_x .* mu', 2);
+if isfield(constraint_cfg, 'uncertainty_max')
+    uncertainty_max = constraint_cfg.uncertainty_max;
+else
+    uncertainty_max = constraint_cfg.sigma2_max;
+end
+h = uncertainty_max - uncertainty_now;
+rhs = phi_t * constraint_cfg.alpha_gain * h - uncertainty_t - ...
+    sum(grad_x .* mu', 2);
 grad_norm_sq = sum(grad_x .^ 2, 2);
 
 u = zeros(size(mu'));

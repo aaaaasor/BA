@@ -192,11 +192,13 @@ for traj_eval_idx = 1:n_eval
     end
 end
 disp('Running second-level segment RK4 rollout...');
+second_level_uncertainty_threshold = ...
+    cfg.gp.second_level_generation_accuracy_threshold;
 segment_variance_constraint = cfg.variance_constraint;
-segment_variance_constraint.sigma2_max = ...
-    cfg.gp.second_level_generation_accuracy_threshold;
+segment_variance_constraint.uncertainty_max = ...
+    second_level_uncertainty_threshold;
 segment_variance_constraint.generation_accuracy_threshold = ...
-    cfg.gp.second_level_generation_accuracy_threshold;
+    second_level_uncertainty_threshold;
 if isfield(cfg.variance_constraint, 'second_level_alpha_gain')
     segment_variance_constraint.alpha_gain = ...
         cfg.variance_constraint.second_level_alpha_gain;
@@ -326,9 +328,9 @@ uncertainty_times = segment_rollout_times;
 disp('Evaluating second-level LoG-GP predictive uncertainty...');
 uncertainty_values = evaluate_rollout_uncertainty(segment_model_collection, ...
     segment_rollout_times, segment_traj_path_10d);
-uncertainty_threshold = segment_variance_constraint.sigma2_max;
+uncertainty_threshold = second_level_uncertainty_threshold;
 uncertainty_plot_title = ...
-    'Second-Level LoG-GP Predictive Uncertainty Along Segment Rollout';
+    'Second-Level LoG-GP Predictive Variance Along Segment Rollout';
 uncertainty_level_label = 'second-level';
 
 %% Plot Results
@@ -382,10 +384,23 @@ if output_enabled
         fullfile(output_dir, 'trajectory_reconstruction_samples.csv'), ...
         'WriteMode', 'append');
 
-    traj_gp_var_table = [uncertainty_times, uncertainty_values(:, :, 1)];
-    traj_gp_var_headers = ["s", ...
-        arrayfun(@(idx) "path_" + string(idx) + "_uncertainty", ...
-        0:(size(uncertainty_values, 2) - 1))];
+    n_uncertainty_paths = size(uncertainty_values, 2);
+    n_uncertainty_outputs = size(uncertainty_values, 3);
+    traj_gp_var_table = zeros(numel(uncertainty_times), ...
+        1 + n_uncertainty_paths * n_uncertainty_outputs);
+    traj_gp_var_table(:, 1) = uncertainty_times;
+    traj_gp_var_headers = strings(1, ...
+        1 + n_uncertainty_paths * n_uncertainty_outputs);
+    traj_gp_var_headers(1) = "s";
+    for output_idx = 1:size(uncertainty_values, 3)
+        column_idx = 2 + (output_idx - 1) * n_uncertainty_paths;
+        column_range = column_idx:(column_idx + n_uncertainty_paths - 1);
+        traj_gp_var_table(:, column_range) = ...
+            uncertainty_values(:, :, output_idx);
+        traj_gp_var_headers(column_range) = ...
+            arrayfun(@(idx) "path_" + string(idx) + "_dim_" + ...
+            string(output_idx) + "_variance", 0:(n_uncertainty_paths - 1));
+    end
     writematrix(traj_gp_var_headers, fullfile(output_dir, ...
         'trajectory_gp_predictive_uncertainties.csv'));
     writematrix(traj_gp_var_table, ...
@@ -422,13 +437,13 @@ disp(['Second-level LoG-GP added pairs per output after accuracy check: ', ...
 disp(['Second-level LoG-GP skipped pairs per output after accuracy check: ', ...
     mat2str(segment_model_collection.n_skipped_per_output(:)')]);
 disp(['Second-level generation uncertainty threshold: ', ...
-    num2str(segment_variance_constraint.sigma2_max)]);
+    num2str(second_level_uncertainty_threshold)]);
 disp(['Second-level generated sample curves: ', ...
     num2str(n_second_level_eval)]);
 disp(['Total training trajectories: ', num2str(size(x_slices, 2))]);
 disp(['Rolled-out trajectories: ', num2str(n_eval)]);
 disp(['First-level generation uncertainty threshold: ', ...
-    num2str(cfg.variance_constraint.sigma2_max)]);
+    num2str(cfg.variance_constraint.uncertainty_max)]);
 if output_enabled
     disp(['Uncertainty-vs-time figure: ', ...
         fullfile(output_dir, 'trajectory_gp_uncertainty_vs_time_matlab.emf')]);
@@ -439,19 +454,25 @@ if strlength(animation_path) > 0
     disp(['Single-trajectory animation: ', char(animation_path)]);
 end
 disp(['Final plotted ', uncertainty_level_label, ...
-    ' LoG-GP uncertainty mean: ', ...
-    num2str(mean(uncertainty_values(end, :, 1)))]);
+    ' LoG-GP total std mean: ', ...
+    num2str(mean(sqrt(sum(uncertainty_values(end, :, :), 3))))]);
 disp(['Final plotted ', uncertainty_level_label, ...
-    ' LoG-GP uncertainty max: ', ...
-    num2str(max(uncertainty_values(end, :, 1)))]);
+    ' LoG-GP total std max: ', ...
+    num2str(max(sqrt(sum(uncertainty_values(end, :, :), 3))))]);
 
 function rollout_uncertainty = evaluate_rollout_uncertainty( ...
     model_collection, rollout_times, rollout_path)
-rollout_uncertainty = zeros(numel(rollout_times), size(rollout_path, 2), 1);
+model = model_collection.model;
+if isfield(model, 'output_models')
+    n_outputs = numel(model.output_models);
+else
+    n_outputs = 1;
+end
+rollout_uncertainty = zeros(numel(rollout_times), size(rollout_path, 2), ...
+    n_outputs);
 for sample_idx = 1:size(rollout_path, 2)
     for time_idx = 1:numel(rollout_times)
         s_now = rollout_times(time_idx);
-        model = model_collection.model;
         z_now = [s_now; squeeze(rollout_path(time_idx, sample_idx, :))];
         if isfield(model, 'output_models')
             variance_set = zeros(numel(model.output_models), 1);
@@ -459,11 +480,12 @@ for sample_idx = 1:size(rollout_path, 2)
                 [~, variance_set(output_idx)] = ...
                     model.output_models{output_idx}.predict_variance_grad(z_now);
             end
-            uncertainty_now = sqrt(max(sum(variance_set), 0.0));
+            rollout_uncertainty(time_idx, sample_idx, :) = ...
+                reshape(variance_set, 1, 1, []);
         else
-            [~, uncertainty_now] = model.local_gp.predict_variance_grad(z_now);
+            [~, variance_now] = model.local_gp.predict_variance_grad(z_now);
+            rollout_uncertainty(time_idx, sample_idx, 1) = variance_now;
         end
-        rollout_uncertainty(time_idx, sample_idx, 1) = uncertainty_now;
     end
     if mod(sample_idx, 10) == 0 || sample_idx == size(rollout_path, 2)
         fprintf('  Evaluated uncertainty for %d / %d samples...\n', ...

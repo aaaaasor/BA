@@ -83,12 +83,12 @@ cfg.gp.max_local_gp_quantity = ceil(2.0 * cfg.n_train * cfg.n_time_slices / ...
     cfg.gp.max_local_data_quantity);
 cfg.gp.aggregation_method = 'GPOE';
 cfg.gp.training_accuracy_threshold = 0.5;
-cfg.gp.second_level_training_accuracy_threshold = 1.0;
+cfg.gp.second_level_training_accuracy_threshold = 1.5;
 cfg.gp.generation_accuracy_threshold = 0.8;
-cfg.gp.second_level_generation_accuracy_threshold = 1.2;
+cfg.gp.second_level_generation_accuracy_threshold = 1.0;
 
 %% Variance Constraint
-cfg.variance_constraint.sigma2_max = cfg.gp.generation_accuracy_threshold;
+cfg.variance_constraint.uncertainty_max = cfg.gp.generation_accuracy_threshold;
 cfg.variance_constraint.generation_accuracy_threshold = ...
     cfg.gp.generation_accuracy_threshold;
 cfg.variance_constraint.alpha_gain = 5.0;
