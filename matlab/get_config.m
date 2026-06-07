@@ -63,7 +63,8 @@ if cfg.small_sample.enabled
     cfg.cache.model_enabled = true;
     cfg.cache.rollout_enabled = false;
     cfg.cache.first_level_model_path = fullfile('outputs', ...
-        ['LoG_GP_FirstLevel_Model_', cfg.slope.cache_tag, '_small.mat']);
+        ['LoG_GP_FirstLevel_Model_', cfg.slope.cache_tag, ...
+        '_full20_small.mat']);
     cfg.cache.second_level_model_path = fullfile('outputs', ...
         ['LoG_GP_SecondLevel_Model_', cfg.slope.cache_tag, ...
         '_small.mat']);
@@ -79,14 +80,15 @@ cfg.gp.max_data_quantity = cfg.n_train;
 cfg.gp.optimize_hyperparameters = true;
 cfg.gp.reuse_saved_hyperparameters = true;
 cfg.gp.n_pretrain = min(500, cfg.n_train * cfg.n_time_slices);
-cfg.gp.pretrain_output_idx = 1:4;
+cfg.gp.pretrain_output_idx = 1:20;
 cfg.gp.second_level_hyperparameter_grouping = 'none';
 cfg.gp.hyperparameter_mat_path = fullfile('outputs', ...
     ['LoG_GP_Hyperparameter_', cfg.slope.cache_tag, '.mat']);
 if cfg.small_sample.enabled
     cfg.gp.save_hyperparameters = false;
     cfg.gp.hyperparameter_mat_path = fullfile('outputs', ...
-        ['LoG_GP_Hyperparameter_', cfg.slope.cache_tag, '_small.mat']);
+        ['LoG_GP_Hyperparameter_', cfg.slope.cache_tag, ...
+        '_full20_small.mat']);
     if ~cfg.small_sample.reuse_full_hyperparameters
         cfg.gp.hyperparameter_mat_path = "";
     end
