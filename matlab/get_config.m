@@ -18,11 +18,14 @@ cfg.second_level_fit_seed = cfg.random_seed + 7;
 cfg.second_level_rollout_seed = cfg.random_seed + 8;
 cfg.segment_points_per_segment = 5;
 cfg.second_level_generation_samples = 10;
+cfg.slope.cache_tag = 'tangent';
+cfg.stop_after_first_level = false;
+cfg.second_level_use_training_anchors = false;
 %% Small Sample Mode
-cfg.small_sample.enabled = false;
-cfg.small_sample.n_train = 100;
-cfg.small_sample.n_time_slices = 30;
-cfg.small_sample.time_steps = 30;
+cfg.small_sample.enabled = true;
+cfg.small_sample.n_train = 30;
+cfg.small_sample.n_time_slices = 15;
+cfg.small_sample.time_steps = 100;
 cfg.small_sample.second_level_generation_samples = 1;
 cfg.small_sample.reuse_full_hyperparameters = true;
 
@@ -38,14 +41,16 @@ cfg.output.enabled = true;
 %% Diagnostics
 %% Cache
 cfg.cache.enabled = true;
+cfg.cache.model_enabled = cfg.cache.enabled;
+cfg.cache.rollout_enabled = cfg.cache.enabled;
 cfg.cache.first_level_model_path = fullfile('outputs', ...
-    'LoG_GP_FirstLevel_Model.mat');
+    ['LoG_GP_FirstLevel_Model_', cfg.slope.cache_tag, '.mat']);
 cfg.cache.second_level_model_path = fullfile('outputs', ...
-    'LoG_GP_SecondLevel_Model.mat');
+    ['LoG_GP_SecondLevel_Model_', cfg.slope.cache_tag, '.mat']);
 cfg.cache.first_level_rollout_path = fullfile('outputs', ...
-    'LoG_GP_FirstLevel_Rollout.mat');
+    ['LoG_GP_FirstLevel_Rollout_', cfg.slope.cache_tag, '.mat']);
 cfg.cache.second_level_rollout_path = fullfile('outputs', ...
-    'LoG_GP_SecondLevel_Rollout.mat');
+    ['LoG_GP_SecondLevel_Rollout_', cfg.slope.cache_tag, '.mat']);
 
 %% Apply Small Sample Overrides
 if cfg.small_sample.enabled
@@ -54,36 +59,44 @@ if cfg.small_sample.enabled
     cfg.time_steps = cfg.small_sample.time_steps;
     cfg.second_level_generation_samples = ...
         cfg.small_sample.second_level_generation_samples;
-    cfg.cache.enabled = false;
+    cfg.cache.enabled = true;
+    cfg.cache.model_enabled = true;
+    cfg.cache.rollout_enabled = false;
+    cfg.cache.first_level_model_path = fullfile('outputs', ...
+        ['LoG_GP_FirstLevel_Model_', cfg.slope.cache_tag, '_small.mat']);
+    cfg.cache.second_level_model_path = fullfile('outputs', ...
+        ['LoG_GP_SecondLevel_Model_', cfg.slope.cache_tag, ...
+        '_small.mat']);
     cfg.output.enabled = false;
 end
 
 %% LoG-GP Parameters
-cfg.gp.length_scale_vec = [0.3553; 6711; 2.472e4; 295.6; 114.9; ...
-    179.6; 37.76; 6189; 92.38; 5.585e4; 1.134e4];
-cfg.gp.signal_std = 28.1481;
-cfg.gp.noise_std = 0.45322;
+cfg.gp.length_scale_vec = [0.5; repmat([3; 3; 2; 2], 5, 1)];
+cfg.gp.second_level_length_scale_vec = cfg.gp.length_scale_vec;
+cfg.gp.signal_std = 0.2;
+cfg.gp.noise_std = 0.02;
 cfg.gp.max_data_quantity = cfg.n_train;
 cfg.gp.optimize_hyperparameters = true;
 cfg.gp.reuse_saved_hyperparameters = true;
-cfg.gp.n_pretrain = cfg.n_train * cfg.n_time_slices;
-cfg.gp.pretrain_output_idx = [];
-cfg.gp.hyperparameter_mat_path = fullfile('outputs', 'LoG_GP_Hyperparameter.mat');
+cfg.gp.n_pretrain = min(500, cfg.n_train * cfg.n_time_slices);
+cfg.gp.pretrain_output_idx = 1:4;
+cfg.gp.second_level_hyperparameter_grouping = 'none';
+cfg.gp.hyperparameter_mat_path = fullfile('outputs', ...
+    ['LoG_GP_Hyperparameter_', cfg.slope.cache_tag, '.mat']);
 if cfg.small_sample.enabled
     cfg.gp.save_hyperparameters = false;
+    cfg.gp.hyperparameter_mat_path = fullfile('outputs', ...
+        ['LoG_GP_Hyperparameter_', cfg.slope.cache_tag, '_small.mat']);
     if ~cfg.small_sample.reuse_full_hyperparameters
         cfg.gp.hyperparameter_mat_path = "";
     end
 end
-cfg.gp.length_scale_bounds = [0.3, 5.0];
-cfg.gp.signal_std_bounds = [0.3, 2.0];
-cfg.gp.noise_std_bounds = [1e-3, 0.1];
 cfg.gp.max_local_data_quantity = 200;
 cfg.gp.max_local_gp_quantity = ceil(2.0 * cfg.n_train * cfg.n_time_slices / ...
     cfg.gp.max_local_data_quantity);
 cfg.gp.aggregation_method = 'GPOE';
-cfg.gp.training_accuracy_threshold = 0.5;
-cfg.gp.second_level_training_accuracy_threshold = 1.5;
+cfg.gp.training_accuracy_threshold = 0.2;
+cfg.gp.second_level_training_accuracy_threshold = 0.5;
 cfg.gp.generation_accuracy_threshold = 0.8;
 cfg.gp.second_level_generation_accuracy_threshold = 1.0;
 
@@ -95,5 +108,8 @@ cfg.variance_constraint.alpha_gain = 5.0;
 cfg.variance_constraint.omega_gain = 0.12;
 cfg.variance_constraint.second_level_alpha_gain = 5.0;
 cfg.variance_constraint.second_level_omega_gain = 0.12;
+
+
+
 cfg.variance_constraint.grad_tol = 1e-10;
 end

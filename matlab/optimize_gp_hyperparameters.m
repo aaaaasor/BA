@@ -113,8 +113,7 @@ for fit_idx = 1:n_outputs
             'KernelFunction', 'ardsquaredexponential', ...
             'Standardize', false);
     catch err
-        warning('fitrgp failed for output %d: %s', output_idx, err.message);
-        continue;
+        error('fitrgp failed for output %d: %s', output_idx, err.message);
     end
 
     kernel_parameters = gp_model.KernelInformation.KernelParameters;
@@ -126,18 +125,38 @@ for fit_idx = 1:n_outputs
 end
 
 if ~any(valid_fit)
-    warning('All fitrgp hyperparameter optimizations failed. Keeping configured GP hyperparameters.');
-    return;
+    error('All fitrgp hyperparameter optimizations failed.');
+end
+if ~all(valid_fit)
+    failed_output_idx = output_idx_set(~valid_fit);
+    error('fitrgp failed for outputs: %s', mat2str(failed_output_idx));
 end
 
 use_per_output = true;
-gp.length_scale_mat = repmat(median(sigma_l_set(:, valid_fit), 2), ...
-    1, y_dim);
-gp.signal_std_vec = median(sigma_f_set(valid_fit)) * ones(1, y_dim);
-gp.noise_std_vec = median(sigma_n_set(valid_fit)) * ones(1, y_dim);
-gp.length_scale_mat(:, output_idx_set(valid_fit)) = sigma_l_set(:, valid_fit);
-gp.signal_std_vec(output_idx_set(valid_fit)) = sigma_f_set(valid_fit);
-gp.noise_std_vec(output_idx_set(valid_fit)) = sigma_n_set(valid_fit);
+hyperparameter_grouping = "none";
+if isfield(gp, 'hyperparameter_grouping') && ...
+        ~isempty(gp.hyperparameter_grouping)
+    hyperparameter_grouping = string(gp.hyperparameter_grouping);
+end
+if hyperparameter_grouping == "feature_type_median"
+    [gp.length_scale_mat, gp.signal_std_vec, gp.noise_std_vec] = ...
+        expand_hyperparameters_by_feature_type(sigma_l_set, sigma_f_set, ...
+        sigma_n_set, output_idx_set, valid_fit, y_dim);
+elseif numel(output_idx_set) == y_dim && all(sort(output_idx_set) == 1:y_dim)
+    gp.length_scale_mat = sigma_l_set(:, output_idx_set);
+    gp.signal_std_vec = sigma_f_set(output_idx_set);
+    gp.noise_std_vec = sigma_n_set(output_idx_set);
+else
+    [gp.length_scale_mat, gp.signal_std_vec, gp.noise_std_vec] = ...
+        expand_hyperparameters_by_feature_type(sigma_l_set, sigma_f_set, ...
+        sigma_n_set, output_idx_set, valid_fit, y_dim);
+end
+if hyperparameter_grouping ~= "feature_type_median"
+    gp.length_scale_mat(:, output_idx_set(valid_fit)) = ...
+        sigma_l_set(:, valid_fit);
+    gp.signal_std_vec(output_idx_set(valid_fit)) = sigma_f_set(valid_fit);
+    gp.noise_std_vec(output_idx_set(valid_fit)) = sigma_n_set(valid_fit);
+end
 
 gp.length_scale_vec = median(gp.length_scale_mat, 2);
 gp.signal_std = median(gp.signal_std_vec);
@@ -167,5 +186,50 @@ if save_hyperparameters && strlength(hyperparameter_mat_path) > 0
     fprintf('Saved hyperparameters: %s\n', hyperparameter_mat_path);
 elseif ~save_hyperparameters
     fprintf('Hyperparameter saving disabled for this run.\n');
+end
+end
+
+function [length_scale_mat, signal_std_vec, noise_std_vec] = ...
+    expand_hyperparameters_by_feature_type(sigma_l_set, sigma_f_set, ...
+    sigma_n_set, output_idx_set, valid_fit, y_dim)
+valid_output_idx = output_idx_set(valid_fit);
+valid_length_scales = sigma_l_set(:, valid_fit);
+valid_signal_std = sigma_f_set(valid_fit);
+valid_noise_std = sigma_n_set(valid_fit);
+
+feature_dim = infer_feature_dim(y_dim, valid_output_idx);
+if isempty(feature_dim)
+    error(['Cannot infer feature grouping for partial output ', ...
+        'hyperparameters: %s'], mat2str(output_idx_set));
+end
+
+length_scale_mat = nan(size(valid_length_scales, 1), y_dim);
+signal_std_vec = nan(1, y_dim);
+noise_std_vec = nan(1, y_dim);
+for feature_idx = 1:feature_dim
+    source_mask = mod(valid_output_idx - 1, feature_dim) == ...
+        (feature_idx - 1);
+    if ~any(source_mask)
+        error('Missing optimized hyperparameters for feature type %d.', ...
+            feature_idx);
+    end
+    feature_length_scale = median(valid_length_scales(:, source_mask), 2);
+    feature_signal_std = median(valid_signal_std(source_mask));
+    feature_noise_std = median(valid_noise_std(source_mask));
+    target_mask = mod((1:y_dim) - 1, feature_dim) == (feature_idx - 1);
+    length_scale_mat(:, target_mask) = repmat(feature_length_scale, ...
+        1, sum(target_mask));
+    signal_std_vec(target_mask) = feature_signal_std;
+    noise_std_vec(target_mask) = feature_noise_std;
+end
+end
+
+function feature_dim = infer_feature_dim(y_dim, output_idx_set)
+if mod(y_dim, 4) == 0 && all(ismember(1:4, output_idx_set))
+    feature_dim = 4;
+elseif mod(y_dim, 2) == 0 && all(ismember(1:2, output_idx_set))
+    feature_dim = 2;
+else
+    feature_dim = [];
 end
 end

@@ -8,9 +8,10 @@ if nargin < 5 || isempty(n_points_per_window)
 end
 n_dense_points = size(dense_points, 1);
 n_trajectories = size(dense_points, 2);
+feature_dim = size(dense_points, 3);
 n_windows = n_dense_points - n_points_per_window + 1;
 n_samples = n_trajectories * n_windows;
-n_rows = 2 * n_points_per_window;
+n_rows = feature_dim * n_points_per_window;
 
 s_slices = linspace(t_min, t_max, n_s_slices)';
 target_data = zeros(n_rows, n_samples);
@@ -22,20 +23,24 @@ for window_idx = 1:n_windows
         window_points = dense_points(window_idx:(window_idx + ...
             n_points_per_window - 1), traj_idx, :);
         window_curve = squeeze(window_points);
+        if n_points_per_window == 1
+            window_curve = reshape(window_curve, 1, []);
+        end
         target_data(:, sample_idx) = reshape(window_curve', [], 1);
         sample_idx = sample_idx + 1;
     end
 end
 
 %% Standardize Window Target Distribution
-target_mean = mean(target_data, 'all');
-target_std = std(target_data, 0, 'all');
+target_mean = mean(target_data, 2);
+target_std = std(target_data, 0, 2);
 target_std = max(target_std, eps);
 
 target_data_model = (target_data - target_mean) ./ target_std;
 source_data = randn(size(target_data));
 data_transform.mean = target_mean;
 data_transform.std = target_std;
+data_transform.feature_dim = feature_dim;
 
 target_vectors = target_data_model';
 source_vectors = source_data';

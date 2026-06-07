@@ -19,8 +19,8 @@ movegui(fig, 'center');
 tiledlayout(1, 3, 'TileSpacing', 'compact', 'Padding', 'compact');
 
 %% Shared Target/Rollout Axis Limits
-target_xy = reshape(target_points, [], 2);
-rollout_xy = reshape(reconstructed_points, [], 2);
+target_xy = reshape(target_points(:, :, 1:2), [], 2);
+rollout_xy = reshape(reconstructed_points(:, :, 1:2), [], 2);
 comparison_xy = [target_xy; rollout_xy];
 comparison_xy = comparison_xy(all(isfinite(comparison_xy), 2), :);
 x_limits = [min(comparison_xy(:, 1)), max(comparison_xy(:, 1))];
@@ -35,7 +35,7 @@ nexttile;
 hold on;
 n_training_curves = size(target_points, 2);
 for idx = 1:n_training_curves
-    training_curve = squeeze(target_points(:, idx, :));
+    training_curve = squeeze(target_points(:, idx, 1:2));
     plot(training_curve(:, 1), training_curve(:, 2), '.-', 'LineWidth', 0.8, ...
         'HandleVisibility', 'off');
 end
@@ -52,14 +52,14 @@ nexttile;
 hold on;
 max_curves = min(size(source_points, 2), cfg.n_trajectories);
 for idx = 1:max_curves
-    source_curve = squeeze(source_points(:, idx, :));
+    source_curve = squeeze(source_points(:, idx, 1:2));
     plot(source_curve(:, 1), source_curve(:, 2), '--', 'LineWidth', 0.9);
 end
 grid on;
 axis equal;
 xlabel('x');
 ylabel('y');
-title('10D ODE Source Trajectories');
+title('ODE Source Trajectories');
 
 %% Rollout Trajectories
 nexttile;
@@ -69,7 +69,7 @@ fprintf('Plotting second-level rollout sample curves: %d / %d\n', ...
     max_curves, size(reconstructed_points, 2));
 rollout_colors = lines(max(max_curves, 1));
 for idx = 1:max_curves
-    reconstructed_curve = squeeze(reconstructed_points(:, idx, :));
+    reconstructed_curve = squeeze(reconstructed_points(:, idx, 1:2));
     if idx == 1
         plot(reconstructed_curve(:, 1), reconstructed_curve(:, 2), ...
             'Color', rollout_colors(idx, :), 'LineWidth', 1.1, ...
@@ -86,6 +86,7 @@ if max_curves > 0
     refined_idx = setdiff(1:size(reconstructed_points, 1), anchor_idx);
     for idx = 1:max_curves
         refined_curve = squeeze(reconstructed_points(refined_idx, idx, :));
+        refined_curve = refined_curve(:, 1:2);
         if idx == 1
             plot(refined_curve(:, 1), refined_curve(:, 2), 'o', ...
                 'Color', rollout_colors(idx, :), ...
@@ -115,6 +116,7 @@ if max_curves > 0
         end
         for idx = 1:n_reference_curves
             reference_curve = squeeze(reference_points(:, idx, :));
+            reference_curve = reference_curve(:, 1:2);
             if idx == 1
                 plot(reference_curve(:, 1), reference_curve(:, 2), ...
                     'Color', [0.9, 0.0, 0.0], 'LineStyle', '-', ...
@@ -128,6 +130,7 @@ if max_curves > 0
     end
     for idx = 1:max_curves
         anchor_curve = squeeze(reconstructed_points(anchor_idx, idx, :));
+        anchor_curve = anchor_curve(:, 1:2);
         if idx == 1
             plot(anchor_curve(:, 1), anchor_curve(:, 2), 'ks-', ...
                 'LineWidth', 1.5, 'MarkerSize', 7, ...
@@ -147,7 +150,7 @@ xlim(x_limits);
 ylim(y_limits);
 xlabel('x');
 ylabel('y');
-title(sprintf('10D ODE Rollout Trajectories (%d Points, %d Samples)', ...
+title(sprintf('ODE Rollout Trajectories (%d Points, %d Samples)', ...
     size(reconstructed_points, 1), max_curves));
 legend('Location', 'best');
 

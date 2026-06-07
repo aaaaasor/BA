@@ -1,6 +1,6 @@
-% Build 10D trajectory-space flow-matching training data.
+% Build trajectory-space flow-matching training data.
 % Each MAT-file column is one interleaved trajectory:
-% [x1; y1; x2; y2; ...].
+% [point_1_features; point_2_features; ...].
 function [s_slices, x_slices, y_slices, target_points, source_points, ...
     target_data, source_data, trajectory_t_slices, data_transform] = build_training_data( ...
     mat_path, t_min, t_max, max_trajectories, n_s_slices, target_points_input)
@@ -18,6 +18,7 @@ end
 %% Load Target Trajectories
 if nargin >= 6 && ~isempty(target_points_input)
     target_points_input = double(target_points_input);
+    feature_dim = size(target_points_input, 3);
     target_data = reshape(permute(target_points_input, [3, 1, 2]), ...
         [], size(target_points_input, 2));
 else
@@ -26,6 +27,7 @@ else
         error('The MAT file does not contain the variable data_train.');
     end
     target_data = double(loaded_data.data_train);
+    feature_dim = 2;
     if nargin >= 4 && ~isempty(max_trajectories)
         max_trajectories = min(max_trajectories, size(target_data, 2));
         target_data = target_data(:, 1:max_trajectories);
@@ -34,32 +36,33 @@ end
 
 %% Dimension Checks
 n_rows = size(target_data, 1);
-if mod(n_rows, 2) ~= 0
-    error('Trajectory data must have an even number of rows.');
+if mod(n_rows, feature_dim) ~= 0
+    error('Trajectory rows must be divisible by feature_dim.');
 end
 
 n_samples = size(target_data, 2);
-n_points_per_traj = n_rows / 2;
+n_points_per_traj = n_rows / feature_dim;
 trajectory_t_slices = linspace(t_min, t_max, n_points_per_traj)';
 s_slices = linspace(t_min, t_max, n_s_slices)';
 
-target_points = zeros(n_points_per_traj, n_samples, 2);
-source_points = zeros(n_points_per_traj, n_samples, 2);
+target_points = zeros(n_points_per_traj, n_samples, feature_dim);
+source_points = zeros(n_points_per_traj, n_samples, feature_dim);
 
 %% Standardize Target Distribution
-target_mean = mean(target_data, 'all');
-target_std = std(target_data, 0, 'all');
+target_mean = mean(target_data, 2);
+target_std = std(target_data, 0, 2);
 target_std = max(target_std, eps);
 
 target_data_model = (target_data - target_mean) ./ target_std;
 source_data = randn(size(target_data));
 data_transform.mean = target_mean;
 data_transform.std = target_std;
+data_transform.feature_dim = feature_dim;
 
 %% Target And Source Trajectories
 for sample_idx = 1:n_samples
-    target_matrix = reshape(target_data(:, sample_idx), 2, [])';
-    source_matrix = reshape(source_data(:, sample_idx), 2, [])';
+    target_matrix = reshape(target_data(:, sample_idx), feature_dim, [])';
+    source_matrix = reshape(source_data(:, sample_idx), feature_dim, [])';
 
     target_points(:, sample_idx, :) = target_matrix;
     source_points(:, sample_idx, :) = source_matrix;

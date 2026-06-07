@@ -13,7 +13,6 @@ end
 if nargin < 8 || isempty(fixed_state_values)
     fixed_state_values = x_init;
 end
-
 %% Allocate Path
 times = linspace(t0, t1, n_steps + 1)';
 dt = (t1 - t0) / n_steps;

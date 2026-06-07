@@ -20,13 +20,15 @@ output_path = fullfile(output_dir, ...
     'trajectory_gp_uncertainty_vs_time_matlab.emf');
 
 %% Figure Layout
+n_outputs = size(traj_gp_vars, 3);
+n_cols = 2;
+n_rows = ceil(n_outputs / n_cols);
 fig = figure('Color', 'w', 'WindowStyle', 'normal', ...
     'Units', 'normalized', 'Position', [0.08, 0.08, 0.84, 0.78]);
 movegui(fig, 'center');
-tiledlayout(5, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
+tiledlayout(n_rows, n_cols, 'TileSpacing', 'compact', 'Padding', 'compact');
 
 %% Per-Dimension Variance Curves
-n_outputs = size(traj_gp_vars, 3);
 per_output_threshold = (threshold ^ 2) / max(n_outputs, 1);
 for output_idx = 1:n_outputs
     nexttile;

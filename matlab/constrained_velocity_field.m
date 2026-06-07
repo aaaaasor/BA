@@ -27,6 +27,10 @@ if isfield(model, 'output_models')
         variance_set(output_idx) = variance_now;
         grad_set(output_idx, :) = grad_now;
     end
+    if numel(fixed_mask) == y_dim
+        variance_set(fixed_mask) = 0.0;
+        grad_set(fixed_mask, :) = 0.0;
+    end
     uncertainty_now = sqrt(max(sum(variance_set), 0.0));
     if uncertainty_now > eps
         grad_all = sum(grad_set, 1) ./ (2.0 * uncertainty_now);
@@ -52,6 +56,9 @@ mu = reshape(mu, [], 1);
 normalized_t = min(max(t, 0.0), 1.0);
 remaining = 1.0 - normalized_t;
 phi_t = constraint_cfg.omega_gain / (remaining ^ 2);
+if isfield(constraint_cfg, 'max_phi') && ~isempty(constraint_cfg.max_phi)
+    phi_t = min(phi_t, constraint_cfg.max_phi);
+end
 if isfield(constraint_cfg, 'uncertainty_max')
     uncertainty_max = constraint_cfg.uncertainty_max;
 else

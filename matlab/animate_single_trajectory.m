@@ -1,4 +1,4 @@
-% Animate one 10D trajectory-space ODE rollout.
+% Animate one trajectory-space ODE rollout.
 function output_path = animate_single_trajectory(cfg, rollout_times, ...
     traj_path_single, source_points)
 %% Output Path
@@ -16,8 +16,11 @@ if ~output_enabled
 end
 
 %% Plot Limits
-all_rollout_points = reshape(traj_path_single', 2, [])';
-all_points = [all_rollout_points; source_points];
+feature_dim = size(source_points, 2);
+all_rollout_states = reshape(traj_path_single', feature_dim, [])';
+all_rollout_points = all_rollout_states(:, 1:2);
+source_points_xy = source_points(:, 1:2);
+all_points = [all_rollout_points; source_points_xy];
 x_pad = 0.08 * (max(all_points(:, 1)) - min(all_points(:, 1)));
 y_pad = 0.08 * (max(all_points(:, 2)) - min(all_points(:, 2)));
 if x_pad <= 0
@@ -35,7 +38,7 @@ fig = figure('Color', 'w', 'WindowStyle', 'normal', ...
 movegui(fig, 'center');
 ax = axes(fig);
 hold(ax, 'on');
-h_source = plot(ax, source_points(:, 1), source_points(:, 2), '--', ...
+h_source = plot(ax, source_points_xy(:, 1), source_points_xy(:, 2), '--', ...
     'Color', [0.45, 0.45, 0.45], 'LineWidth', 1.1, ...
     'DisplayName', 'source');
 h_rollout = plot(ax, nan, nan, '.-', ...
@@ -62,7 +65,8 @@ end
 for frame_nr = 1:numel(frame_idx_set)
     time_idx = frame_idx_set(frame_nr);
     s_now = rollout_times(time_idx);
-    current_curve = reshape(traj_path_single(time_idx, :), 2, [])';
+    current_curve = reshape(traj_path_single(time_idx, :), ...
+        feature_dim, [])';
     anchor_idx = 1:(cfg.segment_points_per_segment - 1): ...
         size(current_curve, 1);
 
@@ -70,8 +74,9 @@ for frame_nr = 1:numel(frame_idx_set)
         'YData', current_curve(:, 2));
     set(h_anchor, 'XData', current_curve(anchor_idx, 1), ...
         'YData', current_curve(anchor_idx, 2));
-    title(ax, sprintf('Single 10D ODE Rollout in Standardized Space, s = %.2f', ...
-        s_now));
+    state_dim = size(current_curve, 1) * size(current_curve, 2);
+    title(ax, sprintf(['Single %dD ODE Rollout in Original Space, ', ...
+        's = %.2f'], state_dim, s_now));
     drawnow;
 
     frame = getframe(fig);

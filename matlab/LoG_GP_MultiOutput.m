@@ -431,6 +431,63 @@ classdef LoG_GP_MultiOutput < handle
 			% Activated Number
 			Na = mCount;
 		end
+		%% Prediction of variance only
+		function var = predict_variance(obj,x)
+			if obj.DataQuantity == 0
+				var = obj.SigmaF ^ 2 * ones(obj.y_dim,1);
+				return;
+			end
+			moP = nan(2 * obj.Max_LocalGP_Quantity - 1,2);
+			mCount = 1;
+			moP(1,1) = obj.RootModel;
+			moP(1,2) = 1;
+			while ~isequal(obj.children(moP(1:mCount,1),:), -1 * ones(mCount,2))
+				for j = 1:mCount
+					if ~isequal(obj.children(moP(j,1),:), -1 * ones(1,2))
+						[pL, pR] = obj.activation(x,moP(j,1));
+						if pL > 0 && pR == 0
+							moP(j,1) = obj.children(moP(j,1),1);
+							moP(j,2) = moP(j,2)*pL;
+						elseif pR > 0 && pL == 0
+							moP(j,1) = obj.children(moP(j,1),2);
+							moP(j,2) = moP(j,2) * pR;
+						elseif pL > 0 && pR > 0
+							mCount = mCount + 1;
+							moP(mCount,1) = obj.children(moP(j,1),2);
+							moP(mCount,2) = moP(j,2) * pR;
+
+							moP(j,1) = obj.children(moP(j,1),1);
+							moP(j,2) = moP(j,2) * pL;
+						end
+					end
+				end
+			end
+
+			obj.AgeOfLocalGP = obj.AgeOfLocalGP + 1;
+			var = zeros(obj.y_dim,1);
+			mu = zeros(obj.y_dim,1);
+			for i=1:mCount
+				NodeNr = moP(i,1);
+				LocalGPNr = obj.Node_GP_Map == NodeNr;
+				local_gp = obj.LocalGP_set{LocalGPNr};
+				switch obj.AggregationMethod
+					case 'MOE'
+						[mu_m,var_m] = local_gp.predict(x);
+						mu = mu + moP(i,2) * mu_m;
+						var = var + (var_m + mu_m .^ 2) * moP(i,2);
+					case 'GPOE'
+						var_m = local_gp.predict_variance(x);
+						var = var + moP(i,2) ./ var_m;
+				end
+				obj.AgeOfLocalGP(obj.Node_GP_Map == NodeNr) = 0;
+			end
+			switch obj.AggregationMethod
+				case 'MOE'
+					var = var - mu .^ 2;
+				case 'GPOE'
+					var = 1 ./ var;
+			end
+		end
 		%% Prediction of mean, variance, and variance gradient
 		function [mu,var,grad] = predict_variance_grad(obj,x)
 			[mu,var] = obj.predict(x, zeros(obj.y_dim,1));

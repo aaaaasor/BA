@@ -277,6 +277,24 @@ classdef LocalGP_MultiOutput < handle
 			eta_min = sqrt(beta) * obj.SigmaN + gamma;
 			eta_max = sqrt(beta) * obj.SigmaF + gamma;
 		end
+		%% Prediction of Variance Only
+		function var = predict_variance(obj,x)
+			LocalGP_DataQuantity = obj.DataQuantity;
+			if LocalGP_DataQuantity == 0
+				var = obj.SigmaF ^ 2 * ones(obj.y_dim,1);
+				return;
+			end
+
+			X_set = obj.X(:,1:LocalGP_DataQuantity);
+			temp_L_now = obj.L(1:LocalGP_DataQuantity,1:LocalGP_DataQuantity);
+			Ktx_now = obj.kernel(X_set, x);
+			v_now = temp_L_now \ Ktx_now;
+			var = obj.kernel(x) - v_now' * v_now;
+			if var < 0
+				var = 0;
+			end
+			var = var * ones(obj.y_dim,1);
+		end
 		%% Prediction of Mean Value, Variance, and Variance Gradient
 		function [mu,var,grad] = predict_variance_grad(obj,x)
 			LocalGP_DataQuantity = obj.DataQuantity;

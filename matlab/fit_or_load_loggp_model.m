@@ -20,27 +20,44 @@ end
 
 if cache_enabled && isfile(cache_path)
     try
-        cached_data = load(cache_path, 'model_collection');
+        cached_data = load(cache_path);
     catch err
         cached_data = struct();
         warning('Could not load cached %s LoG-GP model (%s). Re-fitting.', ...
             cache_label, err.message);
     end
-    if isfield(cached_data, 'model_collection')
-        model_collection = cached_data.model_collection;
-        if isfield(model_collection, 'uses_split_output_cache') && ...
-                model_collection.uses_split_output_cache
-            model_collection.model = load_split_output_model_cache( ...
-                cache_path, model_collection.y_dim);
+    if isfield(cached_data, 'model_collection') || ...
+            isfield(cached_data, 'segment_model_collection')
+        if isfield(cached_data, 'model_collection')
+            model_collection = cached_data.model_collection;
+        else
+            model_collection = cached_data.segment_model_collection;
         end
-        model_collection.cache_label = cache_label;
-        disp(['Loaded cached ', cache_label, ' LoG-GP model: ', ...
-            char(cache_path)]);
-        return;
-    end
-    if ~isfield(cached_data, 'model_collection')
+        expected_y_dim = size(y_slices, 3);
+        expected_n_slices = numel(s_slices);
+        cache_matches = isfield(model_collection, 'y_dim') && ...
+            model_collection.y_dim == expected_y_dim && ...
+            isfield(model_collection, 'n_slices') && ...
+            model_collection.n_slices == expected_n_slices;
+        if cache_matches
+            if isfield(model_collection, 'uses_split_output_cache') && ...
+                    model_collection.uses_split_output_cache
+                model_collection.model = load_split_output_model_cache( ...
+                    cache_path, model_collection.y_dim);
+            end
+            model_collection.cache_label = cache_label;
+            disp(['Loaded cached ', cache_label, ' LoG-GP model: ', ...
+                char(cache_path)]);
+            return;
+        end
         disp(['Cached ', cache_label, ...
-            ' LoG-GP model is missing model_collection. Re-fitting.']);
+            ' LoG-GP model dimension does not match. Re-fitting.']);
+    end
+    if ~isfield(cached_data, 'model_collection') && ...
+            ~isfield(cached_data, 'segment_model_collection')
+        disp(['Cached ', cache_label, ...
+            ' LoG-GP model is missing model_collection or ', ...
+            'segment_model_collection. Re-fitting.']);
     end
 end
 
