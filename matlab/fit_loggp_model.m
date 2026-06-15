@@ -71,12 +71,12 @@ fprintf('  Added per output: %s\n', mat2str(added_counts'));
 fprintf('  Skipped per output: %s\n', mat2str(skipped_counts'));
 model_collection = build_model_collection(s_slices, output_models, ...
     added_counts, skipped_counts, training_added_mask, n_slices, ...
-    size(X, 1), y_dim);
+    size(X, 1), y_dim, input_dim, x_dim, gp);
 end
 
 function model_collection = build_model_collection(s_slices, output_models, ...
     added_counts, skipped_counts, training_added_mask, n_slices, ...
-    n_training_pairs, y_dim)
+    n_training_pairs, y_dim, input_dim, x_dim, gp)
 model.output_models = output_models;
 model.local_gp = output_models{1};
 n_added_pairs = sum(added_counts);
@@ -86,6 +86,27 @@ model_collection.s_slices = s_slices;
 model_collection.model = model;
 model_collection.n_slices = n_slices;
 model_collection.n_training_pairs = n_training_pairs;
+model_collection.input_dim = input_dim;
+model_collection.x_dim = x_dim;
+if isfield(gp, 'training_accuracy_threshold')
+    model_collection.training_accuracy_threshold = ...
+        gp.training_accuracy_threshold;
+end
+if isfield(gp, 'length_scale_mat')
+    model_collection.length_scale_mat = gp.length_scale_mat;
+elseif isfield(gp, 'length_scale_vec')
+    model_collection.length_scale_vec = gp.length_scale_vec(:);
+end
+if isfield(gp, 'signal_std_vec')
+    model_collection.signal_std_vec = gp.signal_std_vec;
+elseif isfield(gp, 'signal_std')
+    model_collection.signal_std = gp.signal_std;
+end
+if isfield(gp, 'noise_std_vec')
+    model_collection.noise_std_vec = gp.noise_std_vec;
+elseif isfield(gp, 'noise_std')
+    model_collection.noise_std = gp.noise_std;
+end
 model_collection.n_added_pairs = n_added_pairs;
 model_collection.n_skipped_pairs = n_skipped_pairs;
 model_collection.n_added_scalar_updates = n_added_pairs;

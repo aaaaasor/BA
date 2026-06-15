@@ -35,8 +35,11 @@ if cfg.cache.model_enabled
 else
     first_model_cache_path = "";
 end
+first_fit_timer = tic;
 model_collection = fit_or_load_loggp_model(s_slices, x_slices, y_slices, ...
     cfg.gp, first_model_cache_path, 'first-level');
+disp(['First-level LoG-GP fit/load elapsed: ', ...
+    num2str(toc(first_fit_timer), '%.1f'), ' seconds']);
 
 %% RK4 Rollout
 disp('Running first-level RK4 rollout...');
@@ -45,7 +48,10 @@ rng(cfg.rollout_seed);
 traj_idx = randperm(n_available_traj, min(cfg.n_trajectories, n_available_traj));
 x_init = source_data(:, traj_idx)';
 n_eval = size(x_init, 1);
+first_rollout_signature = rollout_cache_signature(cfg.variance_constraint, ...
+    cfg.time_steps, cfg.t_min, cfg.rollout_t_max, x_init);
 first_rollout_cache_hit = false;
+first_rollout_cache_timer = tic;
 if cfg.cache.rollout_enabled
     first_rollout_cache_path = fullfile(this_dir, ...
         cfg.cache.first_level_rollout_path);
@@ -57,26 +63,46 @@ if cfg.cache.rollout_enabled
         cached_first_rollout = load(first_rollout_cache_path);
         if isfield(cached_first_rollout, 'rollout_times') && ...
                 isfield(cached_first_rollout, 'traj_path_10d')
-            rollout_times = cached_first_rollout.rollout_times;
-            traj_path_10d = cached_first_rollout.traj_path_10d;
-            first_rollout_cache_hit = true;
-            disp(['Loaded cached first-level rollout: ', ...
-                first_rollout_cache_path]);
+            expected_first_path_size = [cfg.time_steps + 1, ...
+                n_eval, size(x_init, 2)];
+            cache_signature_ok = ...
+                isfield(cached_first_rollout, 'first_rollout_signature') && ...
+                isequaln(cached_first_rollout.first_rollout_signature, ...
+                first_rollout_signature);
+            if isequal(size(cached_first_rollout.traj_path_10d), ...
+                    expected_first_path_size) && cache_signature_ok
+                rollout_times = cached_first_rollout.rollout_times;
+                traj_path_10d = cached_first_rollout.traj_path_10d;
+                first_rollout_cache_hit = true;
+                disp(['Loaded cached first-level rollout: ', ...
+                    first_rollout_cache_path]);
+            else
+                disp(['Cached first-level rollout setting mismatch. ', ...
+                    'Recomputing rollout.']);
+            end
         else
             disp('Cached first-level rollout is missing rollout data.');
         end
     end
 end
+if first_rollout_cache_hit
+    disp(['First-level cached rollout load/check elapsed: ', ...
+        num2str(toc(first_rollout_cache_timer), '%.1f'), ' seconds']);
+end
 if ~first_rollout_cache_hit
+    first_rollout_timer = tic;
     [rollout_times, traj_path_10d] = rk4_rollout(model_collection, ...
         x_init, cfg.t_min, cfg.rollout_t_max, cfg.time_steps, ...
         cfg.variance_constraint);
+    disp(['First-level RK4 rollout elapsed: ', ...
+        num2str(toc(first_rollout_timer), '%.1f'), ' seconds']);
     if cfg.cache.rollout_enabled
         try
-            save(first_rollout_cache_path, 'rollout_times', 'traj_path_10d');
+            save(first_rollout_cache_path, 'rollout_times', ...
+                'traj_path_10d', 'first_rollout_signature');
         catch
             save(first_rollout_cache_path, 'rollout_times', ...
-                'traj_path_10d', '-v7.3');
+                'traj_path_10d', 'first_rollout_signature', '-v7.3');
         end
         disp(['Saved cached first-level rollout: ', ...
             first_rollout_cache_path]);
@@ -174,7 +200,7 @@ if isfield(cfg.gp, 'second_level_hyperparameter_grouping') && ...
 end
 if isfield(cfg, 'small_sample') && isfield(cfg.small_sample, 'enabled') && ...
         cfg.small_sample.enabled
-    segment_gp.save_hyperparameters = false;
+    segment_gp.save_hyperparameters = true;
     segment_gp.hyperparameter_mat_path = fullfile('outputs', ...
         ['LoG_GP_SlidingWindow_Training_Hyperparameter_', ...
         cfg.slope.cache_tag, '_small.mat']);
@@ -201,10 +227,25 @@ end
 segment_gp.max_local_gp_quantity = ceil(2.0 * ...
     size(segment_x_slices, 1) * size(segment_x_slices, 2) / ...
     segment_gp.max_local_data_quantity);
-disp('Optimizing or loading second-level segment LoG-GP hyperparameters...');
-rng(cfg.second_level_hyperparameter_seed);
-segment_gp = optimize_gp_hyperparameters(segment_x_slices, segment_y_slices, ...
-    segment_gp, segment_s_slices);
+use_manual_second_level_hyperparameters = ...
+    isfield(cfg.gp, 'second_level_use_manual_hyperparameters') && ...
+    cfg.gp.second_level_use_manual_hyperparameters;
+if use_manual_second_level_hyperparameters
+    disp('Using manual second-level segment LoG-GP hyperparameters from config...');
+    segment_gp.length_scale_mat = cfg.gp.second_level_length_scale_mat;
+    segment_gp.length_scale_vec = median(segment_gp.length_scale_mat, 2);
+    segment_gp.signal_std_vec = cfg.gp.second_level_signal_std_vec;
+    segment_gp.signal_std = median(segment_gp.signal_std_vec);
+    segment_gp.noise_std_vec = cfg.gp.second_level_noise_std_vec;
+    segment_gp.noise_std = median(segment_gp.noise_std_vec);
+    segment_gp.optimize_hyperparameters = false;
+    segment_gp.save_hyperparameters = false;
+else
+    disp('Optimizing or loading second-level segment LoG-GP hyperparameters...');
+    rng(cfg.second_level_hyperparameter_seed);
+    segment_gp = optimize_gp_hyperparameters(segment_x_slices, ...
+        segment_y_slices, segment_gp, segment_s_slices);
+end
 disp('Fitting second-level segment LoG-GP flow model...');
 rng(cfg.second_level_fit_seed);
 if cfg.cache.model_enabled
@@ -213,9 +254,12 @@ if cfg.cache.model_enabled
 else
     second_model_cache_path = "";
 end
+second_fit_timer = tic;
 segment_model_collection = fit_or_load_loggp_model(segment_s_slices, ...
     segment_x_slices, segment_y_slices, segment_gp, ...
     second_model_cache_path, 'second-level');
+disp(['Second-level LoG-GP fit/load elapsed: ', ...
+    num2str(toc(second_fit_timer), '%.1f'), ' seconds']);
 
 if isfield(cfg, 'second_level_use_training_anchors') && ...
         cfg.second_level_use_training_anchors
@@ -284,7 +328,12 @@ if isfield(cfg.variance_constraint, 'second_level_max_phi')
     segment_variance_constraint.max_phi = ...
         cfg.variance_constraint.second_level_max_phi;
 end
+segment_rollout_signature = rollout_cache_signature( ...
+    segment_variance_constraint, cfg.time_steps, cfg.t_min, ...
+    cfg.rollout_t_max, segment_x_init, segment_fixed_mask, ...
+    segment_fixed_values);
 segment_rollout_cache_hit = false;
+segment_rollout_cache_timer = tic;
 if cfg.cache.rollout_enabled
     segment_rollout_cache_path = fullfile(this_dir, ...
         cfg.cache.second_level_rollout_path);
@@ -296,28 +345,48 @@ if cfg.cache.rollout_enabled
         cached_rollout = load(segment_rollout_cache_path);
         if isfield(cached_rollout, 'segment_rollout_times') && ...
                 isfield(cached_rollout, 'segment_traj_path_10d')
-            segment_rollout_times = cached_rollout.segment_rollout_times;
-            segment_traj_path_10d = cached_rollout.segment_traj_path_10d;
-            segment_rollout_cache_hit = true;
-            disp(['Loaded cached second-level rollout: ', ...
-                segment_rollout_cache_path]);
+            expected_segment_path_size = [cfg.time_steps + 1, ...
+                n_segment_eval, n_segment_rows];
+            cache_signature_ok = isfield(cached_rollout, ...
+                'segment_rollout_signature') && isequaln( ...
+                cached_rollout.segment_rollout_signature, ...
+                segment_rollout_signature);
+            if isequal(size(cached_rollout.segment_traj_path_10d), ...
+                    expected_segment_path_size) && cache_signature_ok
+                segment_rollout_times = cached_rollout.segment_rollout_times;
+                segment_traj_path_10d = cached_rollout.segment_traj_path_10d;
+                segment_rollout_cache_hit = true;
+                disp(['Loaded cached second-level rollout: ', ...
+                    segment_rollout_cache_path]);
+            else
+                disp(['Cached second-level rollout shape mismatch. ', ...
+                    'Recomputing rollout.']);
+            end
         else
             disp('Cached second-level rollout is missing rollout data.');
         end
     end
 end
+if segment_rollout_cache_hit
+    disp(['Second-level cached rollout load/check elapsed: ', ...
+        num2str(toc(segment_rollout_cache_timer), '%.1f'), ' seconds']);
+end
 if ~segment_rollout_cache_hit
+    second_rollout_timer = tic;
     [segment_rollout_times, segment_traj_path_10d] = rk4_rollout( ...
         segment_model_collection, segment_x_init, cfg.t_min, ...
         cfg.rollout_t_max, cfg.time_steps, segment_variance_constraint, ...
         segment_fixed_mask, segment_fixed_values);
+    disp(['Second-level RK4 rollout elapsed: ', ...
+        num2str(toc(second_rollout_timer), '%.1f'), ' seconds']);
     if cfg.cache.rollout_enabled
         try
             save(segment_rollout_cache_path, 'segment_rollout_times', ...
-                'segment_traj_path_10d');
+                'segment_traj_path_10d', 'segment_rollout_signature');
         catch
             save(segment_rollout_cache_path, 'segment_rollout_times', ...
-                'segment_traj_path_10d', '-v7.3');
+                'segment_traj_path_10d', ...
+                'segment_rollout_signature', '-v7.3');
         end
         disp(['Saved cached second-level rollout: ', ...
             segment_rollout_cache_path]);
@@ -376,9 +445,12 @@ final_segment_state = squeeze(segment_traj_path_10d(end, :, :));
 if size(final_segment_state, 1) == 1
     final_segment_state = reshape(final_segment_state, 1, []);
 end
-second_level_fixed_error = max(abs( ...
-    final_segment_state(segment_fixed_mask) - ...
-    segment_fixed_values(segment_fixed_mask)), [], 'all');
+second_level_fixed_error = 0;
+if any(segment_fixed_mask, 'all')
+    second_level_fixed_error = max(abs( ...
+        final_segment_state(segment_fixed_mask) - ...
+        segment_fixed_values(segment_fixed_mask)), [], 'all');
+end
 disp(['Second-level reconstructed size: ', ...
     mat2str(size(reconstructed_points_refined))]);
 disp(['Second-level anchor max error: ', ...
@@ -413,7 +485,351 @@ uncertainty_group_std = compute_uncertainty_group_std(uncertainty_values, ...
 uncertainty_threshold = second_level_uncertainty_threshold;
 uncertainty_plot_title = ...
     'Second-Level LoG-GP Predictive Variance Along Segment Rollout';
+uncertainty_group_plot_title = ...
+    'Second-Level LoG-GP Predictive Std By Feature Group';
 uncertainty_level_label = 'second-level';
+
+%% Third-Level Flow Model
+if isfield(cfg, 'enable_third_level') && cfg.enable_third_level
+    disp('Building third-level segment flow-matching data...');
+    third_level_stride = cfg.segment_points_per_segment - 1;
+    if isfield(cfg, 'third_level_window_stride')
+        third_level_stride = cfg.third_level_window_stride;
+    end
+    n_third_level_training_points = (size(target_points_dense, 1) - 1) * ...
+        (cfg.segment_points_per_segment - 1) + 1;
+    target_points_fine = generate_original_training_points_2d( ...
+        n_third_level_training_points, size(target_points_dense, 2));
+    third_level_anchor_idx = 1:(cfg.segment_points_per_segment - 1): ...
+        size(target_points_fine, 1);
+    third_anchor_reconstruction_error = max(abs( ...
+        target_points_fine(third_level_anchor_idx, :, :) - ...
+        target_points_dense), [], 'all');
+    disp(['Generated fine target anchor reconstruction error: ', ...
+        num2str(third_anchor_reconstruction_error)]);
+
+    [third_segment_s_slices, third_segment_x_slices, ...
+        third_segment_y_slices, ~, ~, third_segment_data_transform] = ...
+        build_sliding_window_training_data(target_points_fine, cfg.t_min, ...
+        1.0, cfg.n_time_slices, cfg.segment_points_per_segment, ...
+        third_level_stride);
+
+    third_segment_gp = cfg.gp;
+    if isfield(cfg.gp, 'second_level_length_scale_vec')
+        third_segment_gp.length_scale_vec = cfg.gp.second_level_length_scale_vec;
+    end
+    third_segment_gp.training_accuracy_threshold = ...
+        cfg.gp.third_level_training_accuracy_threshold;
+    third_segment_gp.hyperparameter_mat_path = fullfile('outputs', ...
+        ['LoG_GP_ThirdLevel_Training_Hyperparameter_', ...
+        cfg.slope.cache_tag, '_block_stride_', ...
+        num2str(third_level_stride), '.mat']);
+    if isfield(cfg, 'small_sample') && isfield(cfg.small_sample, ...
+            'enabled') && cfg.small_sample.enabled
+        third_segment_gp.hyperparameter_mat_path = fullfile('outputs', ...
+            ['LoG_GP_ThirdLevel_Training_Hyperparameter_', ...
+            cfg.slope.cache_tag, '_block_stride_', ...
+            num2str(third_level_stride), '_small.mat']);
+        if isfield(cfg.small_sample, 'reuse_full_hyperparameters') && ...
+                ~cfg.small_sample.reuse_full_hyperparameters
+            third_segment_gp.hyperparameter_mat_path = "";
+        end
+    end
+    third_segment_gp.n_pretrain = min(cfg.gp.third_level_n_pretrain, ...
+        size(third_segment_x_slices, 1) * size(third_segment_x_slices, 2));
+    third_segment_gp.pretrain_output_idx = ...
+        1:(segment_feature_dim * cfg.segment_points_per_segment);
+    if isfield(cfg.gp, 'second_level_hyperparameter_grouping')
+        third_segment_gp.hyperparameter_grouping = ...
+            cfg.gp.second_level_hyperparameter_grouping;
+    end
+    third_segment_gp.max_local_gp_quantity = ceil(2.0 * ...
+        size(third_segment_x_slices, 1) * ...
+        size(third_segment_x_slices, 2) / ...
+        third_segment_gp.max_local_data_quantity);
+    use_manual_third_level_hyperparameters = ...
+        isfield(cfg.gp, 'third_level_use_manual_hyperparameters') && ...
+        cfg.gp.third_level_use_manual_hyperparameters;
+    if use_manual_third_level_hyperparameters
+        disp('Using manual third-level segment LoG-GP hyperparameters from config...');
+        third_segment_gp.length_scale_mat = cfg.gp.third_level_length_scale_mat;
+        third_segment_gp.length_scale_vec = ...
+            median(third_segment_gp.length_scale_mat, 2);
+        third_segment_gp.signal_std_vec = cfg.gp.third_level_signal_std_vec;
+        third_segment_gp.signal_std = median(third_segment_gp.signal_std_vec);
+        third_segment_gp.noise_std_vec = cfg.gp.third_level_noise_std_vec;
+        third_segment_gp.noise_std = median(third_segment_gp.noise_std_vec);
+        third_segment_gp.optimize_hyperparameters = false;
+        third_segment_gp.save_hyperparameters = false;
+    else
+        disp('Optimizing or loading third-level segment LoG-GP hyperparameters...');
+        rng(cfg.second_level_hyperparameter_seed + 100);
+        third_segment_gp = optimize_gp_hyperparameters(third_segment_x_slices, ...
+            third_segment_y_slices, third_segment_gp, third_segment_s_slices);
+        if isfield(cfg.gp, 'third_level_noise_std') && ...
+                ~isempty(cfg.gp.third_level_noise_std)
+            third_segment_gp.noise_std = cfg.gp.third_level_noise_std;
+            third_segment_gp.noise_std_vec = cfg.gp.third_level_noise_std * ...
+                ones(1, size(third_segment_y_slices, 3));
+            disp(['Overriding third-level LoG-GP noise std SigmaN to ', ...
+                num2str(cfg.gp.third_level_noise_std)]);
+        end
+    end
+
+    disp('Fitting third-level segment LoG-GP flow model...');
+    rng(cfg.second_level_fit_seed + 100);
+    third_model_cache_enabled = cfg.cache.model_enabled;
+    if third_model_cache_enabled && isfield(cfg.cache, 'third_level_model_path')
+        third_model_cache_path = fullfile(this_dir, ...
+            cfg.cache.third_level_model_path);
+    else
+        third_model_cache_path = "";
+    end
+    third_fit_timer = tic;
+    third_segment_model_collection = fit_or_load_loggp_model( ...
+        third_segment_s_slices, third_segment_x_slices, ...
+        third_segment_y_slices, third_segment_gp, third_model_cache_path, ...
+        'third-level');
+    disp(['Third-level LoG-GP fit/load elapsed: ', ...
+        num2str(toc(third_fit_timer), '%.1f'), ' seconds']);
+
+    third_level_anchor_points = reconstructed_points_refined;
+    n_third_generation_segments = size(third_level_anchor_points, 1) - 1;
+    n_third_anchor_eval = size(third_level_anchor_points, 2);
+    if isfield(cfg, 'third_level_generation_samples')
+        n_third_samples = cfg.third_level_generation_samples;
+    else
+        n_third_samples = 1;
+    end
+    n_third_level_eval = n_third_anchor_eval * n_third_samples;
+    n_third_segment_eval = n_third_level_eval * n_third_generation_segments;
+    n_third_segment_rows = segment_feature_dim * cfg.segment_points_per_segment;
+    rng(cfg.second_level_rollout_seed + 100);
+    third_segment_x_init = randn(n_third_segment_eval, n_third_segment_rows);
+    third_segment_fixed_mask = false(n_third_segment_eval, ...
+        n_third_segment_rows);
+    third_segment_fixed_values = third_segment_x_init;
+    third_segment_start_idx = 1:segment_feature_dim;
+    third_segment_end_idx = (n_third_segment_rows - segment_feature_dim + 1): ...
+        n_third_segment_rows;
+    for anchor_eval_idx = 1:n_third_anchor_eval
+        for third_sample_idx = 1:n_third_samples
+            third_eval_idx = (anchor_eval_idx - 1) * n_third_samples + ...
+                third_sample_idx;
+            for segment_idx = 1:n_third_generation_segments
+                sample_idx = (third_eval_idx - 1) * ...
+                    n_third_generation_segments + segment_idx;
+                start_point = squeeze(third_level_anchor_points(segment_idx, ...
+                    anchor_eval_idx, :))';
+                end_point = squeeze(third_level_anchor_points(segment_idx + 1, ...
+                    anchor_eval_idx, :))';
+                start_state = (start_point - ...
+                    third_segment_data_transform.mean(third_segment_start_idx)') ./ ...
+                    third_segment_data_transform.std(third_segment_start_idx)';
+                end_state = (end_point - ...
+                    third_segment_data_transform.mean(third_segment_end_idx)') ./ ...
+                    third_segment_data_transform.std(third_segment_end_idx)';
+                third_segment_x_init(sample_idx, third_segment_start_idx) = ...
+                    start_state;
+                third_segment_x_init(sample_idx, third_segment_end_idx) = ...
+                    end_state;
+                fixed_idx = [third_segment_start_idx, third_segment_end_idx];
+                third_segment_fixed_mask(sample_idx, fixed_idx) = true;
+                third_segment_fixed_values(sample_idx, fixed_idx) = ...
+                    [start_state, end_state];
+            end
+        end
+    end
+
+    disp('Running third-level segment RK4 rollout...');
+    third_level_uncertainty_threshold = ...
+        cfg.gp.third_level_generation_accuracy_threshold;
+    third_segment_variance_constraint = cfg.variance_constraint;
+    third_segment_variance_constraint.uncertainty_max = ...
+        third_level_uncertainty_threshold;
+    third_segment_variance_constraint.generation_accuracy_threshold = ...
+        third_level_uncertainty_threshold;
+    if isfield(cfg.variance_constraint, 'third_level_alpha_gain')
+        third_segment_variance_constraint.alpha_gain = ...
+            cfg.variance_constraint.third_level_alpha_gain;
+    end
+    if isfield(cfg.variance_constraint, 'third_level_omega_gain')
+        third_segment_variance_constraint.omega_gain = ...
+            cfg.variance_constraint.third_level_omega_gain;
+    end
+    if isfield(cfg.variance_constraint, 'third_level_max_phi')
+        third_segment_variance_constraint.max_phi = ...
+            cfg.variance_constraint.third_level_max_phi;
+    end
+    third_rollout_signature = rollout_cache_signature( ...
+        third_segment_variance_constraint, cfg.time_steps, cfg.t_min, ...
+        cfg.rollout_t_max, third_segment_x_init, third_segment_fixed_mask, ...
+        third_segment_fixed_values);
+
+    third_rollout_cache_hit = false;
+    third_rollout_cache_enabled = cfg.cache.rollout_enabled;
+    third_rollout_cache_timer = tic;
+    if third_rollout_cache_enabled && isfield(cfg.cache, 'third_level_rollout_path')
+        third_rollout_cache_path = fullfile(this_dir, ...
+            cfg.cache.third_level_rollout_path);
+        third_rollout_cache_dir = fileparts(third_rollout_cache_path);
+        if ~exist(third_rollout_cache_dir, 'dir')
+            mkdir(third_rollout_cache_dir);
+        end
+        if isfile(third_rollout_cache_path)
+            cached_third_rollout = load(third_rollout_cache_path);
+            if isfield(cached_third_rollout, 'third_rollout_times') && ...
+                    isfield(cached_third_rollout, 'third_traj_path_10d')
+                expected_third_path_size = [cfg.time_steps + 1, ...
+                    n_third_segment_eval, n_third_segment_rows];
+                cache_signature_ok = isfield(cached_third_rollout, ...
+                    'third_rollout_signature') && isequaln( ...
+                    cached_third_rollout.third_rollout_signature, ...
+                    third_rollout_signature);
+                if isequal(size(cached_third_rollout.third_traj_path_10d), ...
+                        expected_third_path_size) && cache_signature_ok
+                    third_rollout_times = ...
+                        cached_third_rollout.third_rollout_times;
+                    third_traj_path_10d = ...
+                        cached_third_rollout.third_traj_path_10d;
+                    third_rollout_cache_hit = true;
+                    disp(['Loaded cached third-level rollout: ', ...
+                        third_rollout_cache_path]);
+                else
+                    disp(['Cached third-level rollout shape mismatch. ', ...
+                        'Recomputing rollout.']);
+                end
+            end
+        end
+    end
+    if third_rollout_cache_hit
+        disp(['Third-level cached rollout load/check elapsed: ', ...
+            num2str(toc(third_rollout_cache_timer), '%.1f'), ' seconds']);
+    end
+    if ~third_rollout_cache_hit
+        third_rollout_timer = tic;
+        [third_rollout_times, third_traj_path_10d] = rk4_rollout( ...
+            third_segment_model_collection, third_segment_x_init, ...
+            cfg.t_min, cfg.rollout_t_max, cfg.time_steps, ...
+            third_segment_variance_constraint, third_segment_fixed_mask, ...
+            third_segment_fixed_values);
+        disp(['Third-level RK4 rollout elapsed: ', ...
+            num2str(toc(third_rollout_timer), '%.1f'), ' seconds']);
+        if third_rollout_cache_enabled && exist('third_rollout_cache_path', 'var')
+            try
+                save(third_rollout_cache_path, 'third_rollout_times', ...
+                    'third_traj_path_10d', 'third_rollout_signature');
+            catch
+                save(third_rollout_cache_path, 'third_rollout_times', ...
+                    'third_traj_path_10d', 'third_rollout_signature', ...
+                    '-v7.3');
+            end
+            disp(['Saved cached third-level rollout: ', ...
+                third_rollout_cache_path]);
+        end
+    end
+
+    third_traj_path_plot = zeros(size(third_traj_path_10d));
+    for time_idx = 1:numel(third_rollout_times)
+        states_now = squeeze(third_traj_path_10d(time_idx, :, :));
+        states_plot = states_now' .* third_segment_data_transform.std + ...
+            third_segment_data_transform.mean;
+        third_traj_path_plot(time_idx, :, :) = reshape(states_plot', ...
+            1, n_third_segment_eval, []);
+    end
+    final_third_segment_data = squeeze(third_traj_path_plot(end, :, :));
+    if size(final_third_segment_data, 1) == 1
+        final_third_segment_data = reshape(final_third_segment_data, 1, []);
+    end
+    reconstructed_points_fine = stitch_segment_points( ...
+        final_third_segment_data, n_third_level_eval, ...
+        n_third_generation_segments, cfg.segment_points_per_segment);
+    reconstructed_points_fine = normalize_tangent_features( ...
+        reconstructed_points_fine);
+    initial_third_segment_data = squeeze(third_traj_path_plot(1, :, :));
+    if size(initial_third_segment_data, 1) == 1
+        initial_third_segment_data = reshape(initial_third_segment_data, ...
+            1, []);
+    end
+    third_source_points_plot = stitch_segment_points( ...
+        initial_third_segment_data, n_third_level_eval, ...
+        n_third_generation_segments, cfg.segment_points_per_segment);
+    third_source_points_plot = normalize_tangent_features( ...
+        third_source_points_plot);
+
+    third_output_anchor_idx = 1:(cfg.segment_points_per_segment - 1): ...
+        size(reconstructed_points_fine, 1);
+    third_level_anchor_reference_points = zeros(size(third_level_anchor_points, 1), ...
+        n_third_level_eval, size(third_level_anchor_points, 3));
+    for anchor_eval_idx = 1:n_third_anchor_eval
+        for third_sample_idx = 1:n_third_samples
+            third_eval_idx = (anchor_eval_idx - 1) * n_third_samples + ...
+                third_sample_idx;
+            third_level_anchor_reference_points(:, third_eval_idx, :) = ...
+                third_level_anchor_points(:, anchor_eval_idx, :);
+        end
+    end
+    third_level_anchor_error = max(abs( ...
+        reconstructed_points_fine(third_output_anchor_idx, :, :) - ...
+        third_level_anchor_reference_points), [], 'all');
+    third_target_reference_points = zeros(size(target_points_fine, 1), ...
+        n_third_level_eval, size(target_points_fine, 3));
+    for traj_eval_idx = 1:n_eval
+        for second_sample_idx = 1:n_second_level_samples
+            anchor_eval_idx = (traj_eval_idx - 1) * n_second_level_samples + ...
+                second_sample_idx;
+            for third_sample_idx = 1:n_third_samples
+                third_eval_idx = (anchor_eval_idx - 1) * n_third_samples + ...
+                    third_sample_idx;
+                third_target_reference_points(:, third_eval_idx, :) = ...
+                    target_points_fine(:, traj_idx(traj_eval_idx), :);
+            end
+        end
+    end
+    third_target_error = reconstructed_points_fine(:, :, 1:2) - ...
+        third_target_reference_points(:, :, 1:2);
+    third_target_rmse_per_sample = squeeze(sqrt(mean(sum( ...
+        third_target_error .^ 2, 3), 1)));
+    third_target_rmse_mean = mean(third_target_rmse_per_sample);
+    third_target_rmse_max = max(third_target_rmse_per_sample);
+    disp(['Third-level reconstructed size: ', ...
+        mat2str(size(reconstructed_points_fine))]);
+    disp(['Third-level anchor max error: ', ...
+        num2str(third_level_anchor_error)]);
+    disp(['Third-level target RMSE mean: ', ...
+        num2str(third_target_rmse_mean)]);
+    disp(['Third-level target RMSE max: ', ...
+        num2str(third_target_rmse_max)]);
+
+    disp('Evaluating third-level LoG-GP predictive uncertainty...');
+    uncertainty_values = evaluate_rollout_uncertainty( ...
+        third_segment_model_collection, third_rollout_times, ...
+        third_traj_path_10d, third_segment_fixed_mask);
+    uncertainty_group_std = compute_uncertainty_group_std( ...
+        uncertainty_values, segment_feature_dim);
+    uncertainty_times = third_rollout_times;
+    uncertainty_threshold = third_level_uncertainty_threshold;
+    uncertainty_plot_title = ...
+        'Third-Level LoG-GP Predictive Variance Along Segment Rollout';
+    uncertainty_group_plot_title = ...
+        'Third-Level LoG-GP Predictive Std By Feature Group';
+    uncertainty_level_label = 'third-level';
+
+    target_points_plot = target_points_fine;
+    source_points_plot = third_source_points_plot;
+    reconstructed_points_plot = reconstructed_points_fine;
+    target_reference_points = third_target_reference_points;
+    reconstructed_points_refined = reconstructed_points_fine;
+    final_trajectory_data = reshape(permute(reconstructed_points_fine, ...
+        [3, 1, 2]), [], n_third_level_eval)';
+    reconstruction_source_idx = repelem(reconstruction_source_idx(:), ...
+        n_third_samples);
+    n_generation_segments = n_third_generation_segments;
+    n_second_level_eval = n_third_level_eval;
+    segment_rollout_times = third_rollout_times;
+    segment_traj_path_plot = third_traj_path_plot;
+    segment_traj_path_10d = third_traj_path_10d;
+end
 
 %% Plot Results
 disp('Plotting and exporting results...');
@@ -422,12 +838,17 @@ plot_cfg.n_trajectories = size(reconstructed_points_plot, 2);
 plot_cfg.reference_points = target_reference_points;
 plot_cfg.reference_label = 'Training reference curve';
 plot_cfg.reference_curve_count = n_eval;
+if isfield(cfg, 'enable_third_level') && cfg.enable_third_level
+    plot_cfg.sample_curve_label = 'Stage 3 sample curves';
+    plot_cfg.generated_point_label = 'Stage 3 generated points';
+    plot_cfg.anchor_label = 'Stage 2 fixed anchors';
+end
 plot_results(plot_cfg, target_points_plot, source_points_plot, ...
     reconstructed_points_plot);
 plot_uncertainty_vs_time(cfg, uncertainty_times, uncertainty_values, ...
     uncertainty_plot_title, uncertainty_threshold);
 plot_uncertainty_group_std_vs_time(cfg, uncertainty_times, ...
-    uncertainty_group_std, uncertainty_threshold);
+    uncertainty_group_std, uncertainty_threshold, uncertainty_group_plot_title);
 animation_path = "";
 if cfg.animation.enabled && n_eval > 0
     animation_nr = min(cfg.animation.trajectory_nr, n_second_level_eval);
@@ -526,6 +947,24 @@ disp(['Second-level generation uncertainty threshold: ', ...
     num2str(second_level_uncertainty_threshold)]);
 disp(['Second-level generated sample curves: ', ...
     num2str(n_second_level_eval)]);
+if exist('third_segment_model_collection', 'var')
+    disp(['Third-level LoG-GP noise std SigmaN: ', ...
+        num2str(third_segment_gp.noise_std)]);
+    if isfield(third_segment_gp, 'noise_std_vec')
+        disp(['Third-level LoG-GP noise std SigmaN per output: ', ...
+            mat2str(third_segment_gp.noise_std_vec(:)', 4)]);
+    end
+    disp(['Third-level block-window samples: ', ...
+        num2str(size(third_segment_x_slices, 2))]);
+    disp(['Third-level LoG-GP training pairs: ', ...
+        num2str(third_segment_model_collection.n_training_pairs)]);
+    disp(['Third-level LoG-GP added pairs per output after accuracy check: ', ...
+        mat2str(third_segment_model_collection.n_added_per_output(:)')]);
+    disp(['Third-level LoG-GP skipped pairs per output after accuracy check: ', ...
+        mat2str(third_segment_model_collection.n_skipped_per_output(:)')]);
+    disp(['Third-level generation uncertainty threshold: ', ...
+        num2str(third_level_uncertainty_threshold)]);
+end
 disp(['Total training trajectories: ', num2str(size(x_slices, 2))]);
 disp(['Rolled-out trajectories: ', num2str(n_eval)]);
 disp(['First-level generation uncertainty threshold: ', ...
@@ -567,6 +1006,56 @@ disp(['Final plotted ', uncertainty_level_label, ...
 disp(['Final plotted ', uncertainty_level_label, ...
     ' LoG-GP tangent std max: ', ...
     num2str(max(uncertainty_group_std(end, :, 2)))]);
+
+function signature = rollout_cache_signature(constraint_cfg, n_steps, t0, t1, ...
+    x_init, fixed_mask, fixed_values)
+signature.time_steps = n_steps;
+signature.t0 = t0;
+signature.t1 = t1;
+signature.uncertainty_max = struct_field_or_nan(constraint_cfg, ...
+    'uncertainty_max');
+signature.generation_accuracy_threshold = struct_field_or_nan( ...
+    constraint_cfg, 'generation_accuracy_threshold');
+signature.alpha_gain = struct_field_or_nan(constraint_cfg, 'alpha_gain');
+signature.omega_gain = struct_field_or_nan(constraint_cfg, 'omega_gain');
+signature.max_phi = struct_field_or_nan(constraint_cfg, 'max_phi');
+if nargin >= 5
+    signature.x_init = numeric_cache_signature(x_init);
+end
+if nargin >= 6
+    signature.fixed_mask = numeric_cache_signature(double(fixed_mask));
+end
+if nargin >= 7
+    signature.fixed_values = numeric_cache_signature(fixed_values);
+end
+end
+
+function value = struct_field_or_nan(value_struct, field_name)
+if isfield(value_struct, field_name) && ~isempty(value_struct.(field_name))
+    value = value_struct.(field_name);
+else
+    value = nan;
+end
+end
+
+function signature = numeric_cache_signature(values)
+signature.size = size(values);
+values = values(:);
+values = values(isfinite(values));
+if isempty(values)
+    signature.sum = 0;
+    signature.sumsq = 0;
+    signature.first = 0;
+    signature.last = 0;
+    signature.max_abs = 0;
+    return;
+end
+signature.sum = sum(values);
+signature.sumsq = sum(values .^ 2);
+signature.first = values(1);
+signature.last = values(end);
+signature.max_abs = max(abs(values));
+end
 
 function plot_first_level_diagnostics(cfg, target_points, source_points, ...
     reconstructed_points, reference_points)
@@ -634,7 +1123,10 @@ group_std(:, :, 3) = sqrt(sum(uncertainty_values, 3));
 end
 
 function plot_uncertainty_group_std_vs_time(cfg, traj_times, group_std, ...
-    threshold)
+    threshold, plot_title)
+if nargin < 5 || isempty(plot_title)
+    plot_title = 'LoG-GP Predictive Std By Feature Group';
+end
 group_names = {'position std', 'tangent std', 'total std'};
 fig = figure('Color', 'w', 'WindowStyle', 'normal', ...
     'Units', 'normalized', 'Position', [0.10, 0.12, 0.72, 0.60]);
@@ -659,7 +1151,7 @@ for group_idx = 1:numel(group_names)
         legend('Location', 'best');
     end
 end
-sgtitle('Second-Level LoG-GP Predictive Std By Feature Group');
+sgtitle(plot_title);
 
 output_enabled = ~isfield(cfg, 'output') || ...
     ~isfield(cfg.output, 'enabled') || cfg.output.enabled;

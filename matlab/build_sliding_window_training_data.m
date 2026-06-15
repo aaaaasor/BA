@@ -1,15 +1,20 @@
 % Build segment-level flow-matching data from sliding windows on dense paths.
 function [s_slices, x_slices, y_slices, target_data, source_data, ...
     data_transform] = build_sliding_window_training_data( ...
-    dense_points, t_min, t_max, n_s_slices, n_points_per_window)
+    dense_points, t_min, t_max, n_s_slices, n_points_per_window, ...
+    window_stride)
 %% Dimensions
 if nargin < 5 || isempty(n_points_per_window)
     n_points_per_window = 5;
 end
+if nargin < 6 || isempty(window_stride)
+    window_stride = 1;
+end
 n_dense_points = size(dense_points, 1);
 n_trajectories = size(dense_points, 2);
 feature_dim = size(dense_points, 3);
-n_windows = n_dense_points - n_points_per_window + 1;
+window_start_idx = 1:window_stride:(n_dense_points - n_points_per_window + 1);
+n_windows = numel(window_start_idx);
 n_samples = n_trajectories * n_windows;
 n_rows = feature_dim * n_points_per_window;
 
@@ -18,9 +23,9 @@ target_data = zeros(n_rows, n_samples);
 
 %% Sliding Window Targets
 sample_idx = 1;
-for window_idx = 1:n_windows
+for window_start = window_start_idx
     for traj_idx = 1:n_trajectories
-        window_points = dense_points(window_idx:(window_idx + ...
+        window_points = dense_points(window_start:(window_start + ...
             n_points_per_window - 1), traj_idx, :);
         window_curve = squeeze(window_points);
         if n_points_per_window == 1

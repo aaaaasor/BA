@@ -53,6 +53,17 @@ for output_idx = 1:n_outputs
 end
 sgtitle(plot_title);
 if output_enabled
-    exportgraphics(fig, output_path, 'ContentType', 'vector');
+    drawnow;
+    if isgraphics(fig, 'figure')
+        try
+            exportgraphics(fig, output_path, 'ContentType', 'vector');
+        catch export_error
+            warning('Vector export failed: %s. Falling back to saveas.', ...
+                export_error.message);
+            saveas(fig, output_path);
+        end
+    else
+        warning('Uncertainty figure handle is invalid. Skipping export.');
+    end
 end
 end
