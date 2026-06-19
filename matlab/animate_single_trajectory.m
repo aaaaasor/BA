@@ -34,9 +34,10 @@ y_limits = [min(all_points(:, 2)) - y_pad, max(all_points(:, 2)) + y_pad];
 
 %% Figure Layout
 fig = figure('Color', 'w', 'WindowStyle', 'normal', ...
-    'Units', 'normalized', 'Position', [0.25, 0.20, 0.45, 0.55]);
+    'Units', 'normalized', 'Position', [0.18, 0.18, 0.58, 0.58]);
 movegui(fig, 'center');
 ax = axes(fig);
+set(ax, 'Position', [0.10, 0.12, 0.62, 0.76]);
 hold(ax, 'on');
 h_source = plot(ax, source_points_xy(:, 1), source_points_xy(:, 2), '--', ...
     'Color', [0.45, 0.45, 0.45], 'LineWidth', 1.1, ...
@@ -44,17 +45,27 @@ h_source = plot(ax, source_points_xy(:, 1), source_points_xy(:, 2), '--', ...
 h_rollout = plot(ax, nan, nan, '.-', ...
     'Color', [0.10, 0.35, 0.90], 'LineWidth', 1.8, ...
     'MarkerSize', 14, 'DisplayName', 'rollout');
+anchor_label = 'first-level anchors';
+if isfield(cfg.animation, 'anchor_label') && ...
+        ~isempty(cfg.animation.anchor_label)
+    anchor_label = cfg.animation.anchor_label;
+end
 h_anchor = plot(ax, nan, nan, 'ks', ...
     'LineWidth', 1.3, 'MarkerSize', 7, 'MarkerFaceColor', 'w', ...
-    'DisplayName', 'first-level anchors');
+    'DisplayName', anchor_label);
 grid(ax, 'on');
 axis(ax, 'equal');
 xlim(ax, x_limits);
 ylim(ax, y_limits);
 xlabel(ax, 'x');
 ylabel(ax, 'y');
-legend(ax, [h_source, h_rollout, h_anchor], 'Location', 'best', ...
-    'AutoUpdate', 'off');
+legend_location = 'northeastoutside';
+if isfield(cfg.animation, 'legend_location') && ...
+        ~isempty(cfg.animation.legend_location)
+    legend_location = cfg.animation.legend_location;
+end
+legend(ax, [h_source, h_rollout, h_anchor], ...
+    'Location', legend_location, 'AutoUpdate', 'off');
 
 %% GIF Frames
 frame_idx_set = 1:cfg.animation.frame_stride:numel(rollout_times);
@@ -75,8 +86,13 @@ for frame_nr = 1:numel(frame_idx_set)
     set(h_anchor, 'XData', current_curve(anchor_idx, 1), ...
         'YData', current_curve(anchor_idx, 2));
     state_dim = size(current_curve, 1) * size(current_curve, 2);
-    title(ax, sprintf(['Single %dD ODE Rollout in Original Space, ', ...
-        's = %.2f'], state_dim, s_now));
+    space_label = 'Original Space';
+    if isfield(cfg.animation, 'space_label') && ...
+            ~isempty(cfg.animation.space_label)
+        space_label = cfg.animation.space_label;
+    end
+    title(ax, sprintf('Single %dD ODE Rollout in %s, s = %.2f', ...
+        state_dim, space_label, s_now));
     drawnow;
 
     frame = getframe(fig);

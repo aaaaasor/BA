@@ -1,4 +1,4 @@
-% Load a cached LoG-GP model when the model-relevant settings are unchanged.
+% Load a cached LoG-GP model when model-relevant settings are unchanged.
 function model_collection = fit_or_load_loggp_model(s_slices, x_slices, ...
     y_slices, gp, cache_path, cache_label)
 if nargin < 6 || isempty(cache_label)

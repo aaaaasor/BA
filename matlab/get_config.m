@@ -2,11 +2,13 @@
 function cfg = get_config()
 %% Training Data
 cfg.n_train = 30;
-cfg.n_trajectories = 1;
+cfg.n_trajectories = 5;
 cfg.n_time_slices = 15;
 cfg.time_steps = 100;
+cfg.third_level_time_steps = 100;
 cfg.t_min = 0.0;
 cfg.rollout_t_max = 0.99;
+cfg.third_level_rollout_t_max = 1.0;
 cfg.random_seed = 7;
 cfg.first_level_data_seed = cfg.random_seed + 1;
 cfg.first_level_hyperparameter_seed = cfg.random_seed + 2;
@@ -18,26 +20,33 @@ cfg.second_level_fit_seed = cfg.random_seed + 7;
 cfg.second_level_rollout_seed = cfg.random_seed + 8;
 cfg.segment_points_per_segment = 5;
 cfg.second_level_generation_samples = 1;
-cfg.third_level_generation_samples = 10;
+cfg.third_level_generation_samples = 1;
 cfg.slope.cache_tag = 'tangent';
 cfg.stop_after_first_level = false;
 cfg.second_level_use_training_anchors = false;
+cfg.fixed_clf.alpha = 10.0;
+cfg.fixed_clf.grad_tol = 1e-10;
+cfg.fixed_clf.diagnostics = true;
+cfg.fixed_clf.ptcbf_fixed_mask_policy = 'ignore_fixed_dims';
+cfg.fixed_anchor_init_mode = 'randn';
+cfg.third_level_fixed_clf_alpha = 50.0;
 cfg.enable_third_level = true;
 cfg.third_level_window_stride = cfg.segment_points_per_segment - 1;
+cfg.skip_uncertainty_evaluation = false;
 %% Small Sample Mode
 cfg.small_sample.enabled = false;
 cfg.small_sample.n_train = 30;
 cfg.small_sample.n_time_slices = 15;
 cfg.small_sample.time_steps = 100;
 cfg.small_sample.second_level_generation_samples = 1;
-cfg.small_sample.third_level_generation_samples = 10;
+cfg.small_sample.third_level_generation_samples = 1;
 cfg.small_sample.reuse_full_hyperparameters = true;
 
 %% Animation
 cfg.animation.enabled = true;
 cfg.animation.trajectory_nr = 1;
 cfg.animation.frame_stride = 2;
-cfg.animation.delay_time = 0.05;
+cfg.animation.delay_time = 0.12;
 
 %% Output
 cfg.output.enabled = true;
@@ -120,12 +129,64 @@ if cfg.gp.second_level_use_manual_hyperparameters
             '_sigmaN008_small.mat']);
     end
 end
+cfg.cache.second_level_model_path = append_cache_tag( ...
+    cfg.cache.second_level_model_path, '_randnSource');
+cfg.cache.second_level_rollout_path = append_cache_tag( ...
+    cfg.cache.second_level_rollout_path, '_randnSource');
+cfg.cache.third_level_model_path = append_cache_tag( ...
+    cfg.cache.third_level_model_path, '_randnSource');
+cfg.cache.third_level_rollout_path = append_cache_tag( ...
+    cfg.cache.third_level_rollout_path, '_randnSource');
+cfg.cache.third_level_model_path = append_cache_tag( ...
+    cfg.cache.third_level_model_path, '_modelRandnSource');
+cfg.cache.third_level_rollout_path = append_cache_tag( ...
+    cfg.cache.third_level_rollout_path, '_modelRandnSource');
+cfg.cache.third_level_model_path = append_cache_tag( ...
+    cfg.cache.third_level_model_path, '_localIncrement');
+cfg.cache.third_level_rollout_path = append_cache_tag( ...
+    cfg.cache.third_level_rollout_path, '_localIncrement');
+cfg.cache.third_level_model_path = append_cache_tag( ...
+    cfg.cache.third_level_model_path, '_noDeltaIncrement');
+cfg.cache.third_level_rollout_path = append_cache_tag( ...
+    cfg.cache.third_level_rollout_path, '_noDeltaIncrement');
+cfg.cache.third_level_model_path = append_cache_tag( ...
+    cfg.cache.third_level_model_path, '_stdN');
+cfg.cache.third_level_rollout_path = append_cache_tag( ...
+    cfg.cache.third_level_rollout_path, '_stdN');
+cfg.cache.third_level_model_path = append_cache_tag( ...
+    cfg.cache.third_level_model_path, '_decodedEndpointClf');
+cfg.cache.third_level_rollout_path = append_cache_tag( ...
+    cfg.cache.third_level_rollout_path, '_decodedEndpointClf');
+cfg.cache.third_level_model_path = append_cache_tag( ...
+    cfg.cache.third_level_model_path, '_lsScale30');
+cfg.cache.third_level_rollout_path = append_cache_tag( ...
+    cfg.cache.third_level_rollout_path, '_lsScale30');
+cfg.cache.third_level_rollout_path = append_cache_tag( ...
+    cfg.cache.third_level_rollout_path, '_modelRandnInit');
+cfg.cache.third_level_rollout_path = append_cache_tag( ...
+    cfg.cache.third_level_rollout_path, ...
+    ['_alpha', number_to_cache_tag(cfg.third_level_fixed_clf_alpha)]);
+if isfield(cfg, 'fixed_clf')
+    cfg.cache.second_level_rollout_path = append_cache_tag( ...
+        cfg.cache.second_level_rollout_path, '_fixedClf');
+end
 cfg.gp.third_level_n_pretrain = 1000;
 cfg.gp.third_level_use_manual_hyperparameters = true;
+cfg.gp.third_level_length_scale_scale = 30.0;
+cfg.gp.third_level_length_scale_min = 1.0;
+cfg.gp.third_level_noise_std_scale = 1.0;
 cfg.gp.third_level_noise_std_vec = third_level_manual_noise_std_vec();
+cfg.gp.third_level_noise_std_vec = cfg.gp.third_level_noise_std_scale * ...
+    cfg.gp.third_level_noise_std_vec;
 cfg.gp.third_level_noise_std = median(cfg.gp.third_level_noise_std_vec);
 cfg.gp.third_level_signal_std_vec = third_level_manual_signal_std_vec();
 cfg.gp.third_level_length_scale_mat = third_level_manual_length_scale_mat();
+cfg.gp.third_level_length_scale_mat = ...
+    cfg.gp.third_level_length_scale_scale * ...
+    cfg.gp.third_level_length_scale_mat;
+cfg.gp.third_level_length_scale_mat = max( ...
+    cfg.gp.third_level_length_scale_mat, ...
+    cfg.gp.third_level_length_scale_min);
 cfg.gp.pretrain_output_idx = 1:20;
 cfg.gp.second_level_hyperparameter_grouping = 'none';
 cfg.gp.hyperparameter_mat_path = fullfile('outputs', ...
@@ -143,11 +204,11 @@ cfg.gp.max_local_data_quantity = 200;
 cfg.gp.max_local_gp_quantity = ceil(2.0 * cfg.n_train * cfg.n_time_slices / ...
     cfg.gp.max_local_data_quantity);
 cfg.gp.aggregation_method = 'GPOE';
-cfg.gp.training_accuracy_threshold = 0.2;
-cfg.gp.second_level_training_accuracy_threshold = 0.05;
+cfg.gp.training_accuracy_threshold = 0.1;
+cfg.gp.second_level_training_accuracy_threshold = 0.0;
 cfg.gp.third_level_training_accuracy_threshold = 0.0005;
 cfg.gp.generation_accuracy_threshold = 0.8;
-cfg.gp.second_level_generation_accuracy_threshold = 0.30;
+cfg.gp.second_level_generation_accuracy_threshold = 0.0001;
 cfg.gp.third_level_generation_accuracy_threshold = 0.001;
 
 %% Variance Constraint
@@ -158,13 +219,33 @@ cfg.variance_constraint.alpha_gain = 5.0;
 cfg.variance_constraint.omega_gain = 0.12;
 cfg.variance_constraint.second_level_alpha_gain = 5.0;
 cfg.variance_constraint.second_level_omega_gain = 0.12;
+cfg.variance_constraint.second_level_grad_tol = 1e-2;
+cfg.variance_constraint.second_level_ptzf_gamma = 3.0;
+cfg.variance_constraint.second_level_ptzf_initial_bound = 6.0;
+cfg.variance_constraint.second_level_slack_weight = 1000.0;
+cfg.variance_constraint.second_level_diagnostics = true;
+cfg.variance_constraint.second_level_diagnostics_version = 19;
 cfg.variance_constraint.third_level_alpha_gain = 5.0;
 cfg.variance_constraint.third_level_omega_gain = 0.12;
-cfg.variance_constraint.third_level_max_phi = 20.0;
+cfg.variance_constraint.third_level_grad_tol = 1e-8;
+cfg.variance_constraint.third_level_ptzf_gamma = 8.0;
+cfg.variance_constraint.third_level_ptzf_initial_bound = 8.0;
+cfg.variance_constraint.third_level_slack_weight = 100;
+cfg.variance_constraint.third_level_diagnostics = true;
+cfg.variance_constraint.third_level_diagnostics_version = 21;
 
 
 
 cfg.variance_constraint.grad_tol = 1e-10;
+end
+
+function tagged_path = append_cache_tag(cache_path, tag)
+[cache_dir, cache_name, cache_ext] = fileparts(cache_path);
+tagged_path = fullfile(cache_dir, [cache_name, tag, cache_ext]);
+end
+
+function tag = number_to_cache_tag(value)
+tag = regexprep(num2str(value), '[^0-9A-Za-z]+', 'p');
 end
 
 function sigma_f = second_level_manual_signal_std_vec()
@@ -209,6 +290,7 @@ sigma_l = [...
     6.19860653463 1.99282997769 1.23040273907 1.36174363722 14.2677336842 1.27287169479 12555.6867173 80955.7594611 8.47696005573 7.19306215446 3.09686929815 4.45592898708 3.62537551807 11919.3127098 2.92635995622 6.19899437849 8.98280693466 5.33888232186 1.40085512678 3.58012649998; ...
     34423.0591603 1.69631411405 1.66075560194 1788.50783912 9390.25111529 1.25157561451 9823.11312703 3.8960145156 2878.60940915 7.83624055379 11953.5814633 10.9120665926 6.02182112005 4.57047334735 4.68325742653 1.69468267893 20017.0363886 6.19072258511 1.48391616548 1.52634031863 ...
     ];
+sigma_l = min(sigma_l, 20);
 end
 
 function sigma_n = third_level_manual_noise_std_vec()
@@ -219,7 +301,7 @@ sigma_n = [0.540801679187 0.519955270723 0.572424655494 ...
     0.528301451278 0.578973121946 0.543950643427 ...
     0.504079516254 0.582776186351 0.517694261816 ...
     0.567195366204 0.517587800714];
-sigma_n = (1/5000)*sigma_n;
+sigma_n = (1/50)*sigma_n;
 end
 
 function sigma_f = third_level_manual_signal_std_vec()

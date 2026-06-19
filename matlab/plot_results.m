@@ -155,7 +155,17 @@ xlabel('x');
 ylabel('y');
 title(sprintf('ODE Rollout Trajectories (%d Points, %d Samples)', ...
     size(reconstructed_points, 1), max_curves));
-legend('Location', 'best');
+legend_location = 'northeastoutside';
+if isfield(cfg, 'legend_location') && ~isempty(cfg.legend_location)
+    legend_location = cfg.legend_location;
+end
+legend_font_size = 8;
+if isfield(cfg, 'legend_font_size') && ~isempty(cfg.legend_font_size)
+    legend_font_size = cfg.legend_font_size;
+end
+lgd = legend('Location', legend_location);
+lgd.FontSize = legend_font_size;
+lgd.ItemTokenSize = [14, 8];
 
 if output_enabled
     exportgraphics(fig, output_path, 'ContentType', 'vector');
