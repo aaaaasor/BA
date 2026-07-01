@@ -1,0 +1,34 @@
+% 初始化诊断 struct 的所有字段
+function hocbf_diag = init_hocbf_diagnostics()
+hocbf_diag.max_correction_norm = 0.0;
+hocbf_diag.max_grad_norm = 0.0;
+hocbf_diag.max_sigma2 = 0.0;
+hocbf_diag.min_barrier_b = inf;
+hocbf_diag.min_relaxed_barrier_b = inf;
+hocbf_diag.min_psi1 = inf;
+hocbf_diag.min_psi2 = inf;
+hocbf_diag.max_hocbf_constraint_residual = -inf;
+hocbf_diag.trace_sample_idx = [];
+hocbf_diag.trace_step_idx = [];
+hocbf_diag.trace_stage_idx = [];
+hocbf_diag.trace_t = [];
+hocbf_diag.trace_psi0 = [];
+hocbf_diag.trace_psi1 = [];
+hocbf_diag.trace_psi2 = [];
+hocbf_diag.trace_psi1_dot = [];
+hocbf_diag.trace_psi0_dot = [];
+hocbf_diag.trace_b_dot = [];
+hocbf_diag.trace_h_bar_dot = [];
+hocbf_diag.trace_alpha1_psi0 = [];
+hocbf_diag.trace_rho = [];
+hocbf_diag.trace_rho_components = [];
+hocbf_diag.trace_u = [];
+hocbf_diag.trace_correction_norm = [];
+hocbf_diag.trace_max_abs_u = [];
+hocbf_diag.trace_barrier_b = [];
+hocbf_diag.trace_relaxed_barrier_b = [];
+hocbf_diag.trace_h_bar = [];
+hocbf_diag.trace_sigma2 = [];
+hocbf_diag.trace_cumulative_variance = [];
+hocbf_diag.trace_time_average_variance = [];
+end

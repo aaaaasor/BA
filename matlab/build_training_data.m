@@ -1,49 +1,17 @@
-% Build trajectory-space flow-matching training data.
-% Each MAT-file column is one interleaved trajectory:
-% [point_1_features; point_2_features; ...].
+% Build trajectory-space flow-matching training data from generated targets.
+% Each sample is provided as target_points_input(point, sample, feature).
 function [s_slices, x_slices, y_slices, target_points, source_points, ...
     target_data, source_data, trajectory_t_slices, data_transform] = build_training_data( ...
-    mat_path, t_min, t_max, max_trajectories, n_s_slices, target_points_input)
-%% Default Arguments
-if nargin < 2
-    t_min = 0.0;
-end
-if nargin < 3
-    t_max = 1.0;
-end
-if nargin < 5 || isempty(n_s_slices)
-    n_s_slices = 25;
-end
-
+    t_min, t_max, n_s_slices, target_points_input)
 %% Load Target Trajectories
-if nargin >= 6 && ~isempty(target_points_input)
-    target_points_input = double(target_points_input);
-    feature_dim = size(target_points_input, 3);
-    target_data = reshape(permute(target_points_input, [3, 1, 2]), ...
-        [], size(target_points_input, 2));
-else
-    loaded_data = load(mat_path, 'data_train');
-    if ~isfield(loaded_data, 'data_train')
-        error('The MAT file does not contain the variable data_train.');
-    end
-    target_data = double(loaded_data.data_train);
-    feature_dim = 2;
-    if nargin >= 4 && ~isempty(max_trajectories)
-        max_trajectories = min(max_trajectories, size(target_data, 2));
-        target_data = target_data(:, 1:max_trajectories);
-    end
-end
-
-%% Dimension Checks
-n_rows = size(target_data, 1);
-if mod(n_rows, feature_dim) ~= 0
-    error('Trajectory rows must be divisible by feature_dim.');
-end
-
-n_samples = size(target_data, 2);
+feature_dim = size(target_points_input, 3); %特征维度
+target_data = reshape(permute(target_points_input, [3, 1, 2]), ...
+    [], size(target_points_input, 2));
+n_rows = size(target_data, 1); %每条轨迹总维度
+n_samples = size(target_data, 2); %轨迹数量
 n_points_per_traj = n_rows / feature_dim;
-trajectory_t_slices = linspace(t_min, t_max, n_points_per_traj)';
-s_slices = linspace(t_min, t_max, n_s_slices)';
+trajectory_t_slices = linspace(t_min, t_max, n_points_per_traj)';%轨迹内部点的位置参数
+s_slices = linspace(t_min, t_max, n_s_slices)'; %生成 Flow Matching 的时间切片
 
 target_points = zeros(n_points_per_traj, n_samples, feature_dim);
 source_points = zeros(n_points_per_traj, n_samples, feature_dim);
@@ -64,12 +32,12 @@ for sample_idx = 1:n_samples
     target_matrix = reshape(target_data(:, sample_idx), feature_dim, [])';
     source_matrix = reshape(source_data(:, sample_idx), feature_dim, [])';
 
-    target_points(:, sample_idx, :) = target_matrix;
-    source_points(:, sample_idx, :) = source_matrix;
+    target_points(:, sample_idx, :) = target_matrix; %保存原始空间target
+    source_points(:, sample_idx, :) = source_matrix; %source轨迹的点形式
 end
 
-target_vectors = target_data_model';
-source_vectors = source_data';
+target_vectors = target_data_model'; %保存标准化空间target
+source_vectors = source_data'; %source轨迹的向量形式
 velocity_vectors = target_vectors - source_vectors;
 
 %% Flow-Matching Pairs

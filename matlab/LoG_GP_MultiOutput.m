@@ -7,6 +7,9 @@ classdef LoG_GP_MultiOutput < handle
 		SigmaF;
 		SigmaL;
 		SigmaN;
+		LengthScaleTimeVarying = false;
+		LengthScaleTimeScaleStart = 1.0;
+		LengthScaleTimeScaleEnd = 1.0;
 		o_ratio = 1/10;
 
 		tau = 1e-6;
@@ -96,6 +99,17 @@ classdef LoG_GP_MultiOutput < handle
 				obj.LocalGP_set{i}.xMin = xMin;
 			end
 		end
+		%% 把 time-varying length scale 的设置同时写到LOG_GP和 LOCAL_GP
+		function set_length_scale_time_schedule(obj, enabled, start_scale, end_scale)
+			obj.LengthScaleTimeVarying = enabled;
+			obj.LengthScaleTimeScaleStart = start_scale;
+			obj.LengthScaleTimeScaleEnd = end_scale;
+			for i = 1:obj.Max_LocalGP_Quantity
+				obj.LocalGP_set{i}.LengthScaleTimeVarying = enabled;
+				obj.LocalGP_set{i}.LengthScaleTimeScaleStart = start_scale;
+				obj.LocalGP_set{i}.LengthScaleTimeScaleEnd = end_scale;
+			end
+		end
 		%% Update
 		function flag = update(obj,x,y,Kickout)
 			if nargin < 4
@@ -133,7 +147,7 @@ classdef LoG_GP_MultiOutput < handle
 			else
 				% warning('wrong!')
 			end
-			if obj.LocalGP_set{LocalGPNr}.DataQuantity == obj.Max_LocalGP_DataQuantity 
+			if obj.LocalGP_set{LocalGPNr}.DataQuantity == obj.Max_LocalGP_DataQuantity
 				if (obj.Max_LocalGP_Quantity - obj.ActivatedGPQuantity) <= 0 || ...
 						(2 * obj.Max_LocalGP_Quantity - 1 - obj.ActivatedNodeQuantity) < 2
 					% all GP nodes are full and occupied
@@ -161,7 +175,7 @@ classdef LoG_GP_MultiOutput < handle
 		end
 		%% Delete Node and GP
 		function delete_Node_GP(obj,LocalGPNr,Unused_LocalGPNr)
-			if nargin < 3 % obj,LocalGPNr
+			if nargin < 3
 				All_AgeOfLocalGP = obj.AgeOfLocalGP;
 				All_AgeOfLocalGP(LocalGPNr) = -1;
 				Unused_LocalGPNr = find(All_AgeOfLocalGP == max(All_AgeOfLocalGP));
@@ -490,12 +504,13 @@ classdef LoG_GP_MultiOutput < handle
 		end
 		%% Prediction of mean, variance, and variance gradient
 		function [mu,var,grad] = predict_variance_grad(obj,x)
-			[mu,var] = obj.predict(x, zeros(obj.y_dim,1));
-			var = mean(var);
 			if obj.DataQuantity == 0
+				mu   = zeros(obj.y_dim,1);
+				var  = obj.LocalGP_set{1}.SigmaF ^ 2;
 				grad = zeros(1,obj.x_dim);
 				return;
 			end
+			% Single tree traversal — no redundant obj.predict call, no set_ErrorBound
 			moP = nan(2 * obj.Max_LocalGP_Quantity - 1,2);
 			mCount = 1;
 			moP(1,1) = obj.RootModel;
@@ -522,28 +537,29 @@ classdef LoG_GP_MultiOutput < handle
 				end
 			end
 
-			p_set = moP(1:mCount,2);
-			var_set = zeros(1,mCount);
+			p_set    = moP(1:mCount,2);
+			mu_set   = zeros(obj.y_dim,mCount);
+			var_set  = zeros(1,mCount);
 			grad_set = zeros(mCount,obj.x_dim);
 			for i = 1:mCount
-				NodeNr = moP(i,1);
+				NodeNr    = moP(i,1);
 				LocalGPNr = obj.Node_GP_Map == NodeNr;
-				[~,var_m,grad_m] = ...
-					obj.LocalGP_set{LocalGPNr}.predict_variance_grad(x);
-				var_set(i) = max(var_m, eps);
+				[mu_m,var_m,grad_m] = obj.LocalGP_set{LocalGPNr}.predict_variance_grad(x);
+				mu_set(:,i)  = mu_m;
+				var_set(i)   = max(var_m, eps);
 				grad_set(i,:) = grad_m;
 			end
 
 			switch obj.AggregationMethod
 				case 'GPOE'
-					precision = sum(p_set' ./ var_set);
+					var  = 1 / sum(p_set' ./ var_set);
+					mu   = var * (mu_set * (p_set ./ var_set'));
 					d_precision = sum(-(p_set' ./ (var_set .^ 2))' .* grad_set, 1);
 					grad = -(var ^ 2) * d_precision;
-				otherwise
-					grad = zeros(1,obj.x_dim);
-					for i = 1:mCount
-						grad = grad + p_set(i) * grad_set(i,:);
-					end
+				otherwise  % MOE
+					mu   = mu_set * p_set;
+					var  = p_set' * var_set';
+					grad = p_set' * grad_set;
 			end
 		end
 	end

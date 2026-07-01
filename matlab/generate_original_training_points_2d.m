@@ -1,13 +1,6 @@
-% Recreate original 2D trajectories with tangent features [dx/ds, dy/ds].
+﻿% Recreate original 2D trajectories with tangent features [dx/ds, dy/ds].
 function points = generate_original_training_points_2d(n_points, ...
     n_trajectories)
-if nargin < 1 || isempty(n_points)
-    n_points = 17;
-end
-if nargin < 2 || isempty(n_trajectories)
-    n_trajectories = 500;
-end
-
 this_dir = fileparts(mfilename('fullpath'));
 trajectory_data_dir = fullfile(this_dir, 'trajectory_data');
 if exist(trajectory_data_dir, 'dir') && ~contains(path, trajectory_data_dir)
@@ -95,11 +88,3 @@ for trajectory_nr = 1:n_trajectories
 end
 end
 
-function derivative_pp = pp_derivative(pp)
-breaks = pp.breaks;
-coefs = pp.coefs;
-order = pp.order;
-powers = (order - 1):-1:1;
-derivative_coefs = coefs(:, 1:(end - 1)) .* powers;
-derivative_pp = mkpp(breaks, derivative_coefs, pp.dim);
-end

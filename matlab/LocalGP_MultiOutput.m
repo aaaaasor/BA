@@ -14,13 +14,14 @@ classdef LocalGP_MultiOutput < handle
 		SigmaN;
 		SigmaF;
 		SigmaL;
+		LengthScaleTimeVarying = false;
+		LengthScaleTimeScaleStart = 1.0;
+		LengthScaleTimeScaleEnd = 1.0;
 		% GP coefficient
 		K;
 		L;
 		alpha;
 		aux_alpha;
-		% Prediction terms
-		v;
 		% Error Bound
 		tau = 1e-6;
 		Lk;
@@ -48,7 +49,6 @@ classdef LocalGP_MultiOutput < handle
 			obj.L = nan(obj.MaxDataQuantity,obj.MaxDataQuantity);
 			obj.aux_alpha = nan(obj.MaxDataQuantity,y_dim);
 			obj.alpha = nan(obj.MaxDataQuantity,y_dim);
-			obj.v = nan(obj.MaxDataQuantity,1);
 
 			obj.SigmaN = SigmaN;
 			obj.SigmaF = SigmaF;
@@ -75,7 +75,6 @@ classdef LocalGP_MultiOutput < handle
 			obj.L = nan(obj.MaxDataQuantity,obj.MaxDataQuantity);
 			obj.aux_alpha = nan(obj.MaxDataQuantity,obj.y_dim);
 			obj.alpha = nan(obj.MaxDataQuantity,obj.y_dim);
-			obj.v = nan(obj.MaxDataQuantity,1);
 
 			obj.ActivateState = false;
 		end
@@ -85,11 +84,102 @@ classdef LocalGP_MultiOutput < handle
 			if nargin == 2
 				n = size(Xi,2);
 				d = zeros(dx,1,n);
-			elseif nargin == 3
+				[length_scale_sq, amplitude_scale] = ...
+					obj.kernel_scale_terms(Xi, []);
+			else
 				m = size(Xj,2);
 				d = Xi - reshape(Xj,dx,1,m);
+				[length_scale_sq, amplitude_scale] = ...
+					obj.kernel_scale_terms(Xi, Xj);
 			end
-			kern = permute((obj.SigmaF^2)*exp(-0.5*sum((d.^2)./(obj.SigmaL.^2),1)),[2 3 1]);
+			kern = permute((obj.SigmaF^2) .* amplitude_scale .* ...
+				exp(-0.5*sum((d.^2)./length_scale_sq,1)),[2 3 1]);
+		end
+		%% 根据时间 t 计算 length scale 的缩放比例
+		function scale = length_scale_time_scale(obj, t)
+			if ~obj.LengthScaleTimeVarying
+				scale = ones(size(t));
+				return;
+			end
+			scale = obj.LengthScaleTimeScaleStart + ...
+				(obj.LengthScaleTimeScaleEnd - ...
+				obj.LengthScaleTimeScaleStart) .* t;
+		end
+		%% 计算 scale 对时间的导数
+		function dscale_dt = length_scale_time_scale_derivative(obj, t)
+			dscale_dt = zeros(size(t));
+			if ~obj.LengthScaleTimeVarying
+				return;
+			end
+			dscale_dt(:) = obj.LengthScaleTimeScaleEnd - obj.LengthScaleTimeScaleStart;
+		end
+		%% 新增 kernel_scale_terms
+		function [length_scale_sq, amplitude_scale] = kernel_scale_terms(obj, Xi, Xj)
+			base_length_scale = reshape(obj.SigmaL, [], 1, 1);
+			if ~obj.LengthScaleTimeVarying
+				length_scale_sq = base_length_scale .^ 2;
+				amplitude_scale = 1.0;
+				return;
+			end
+			if isempty(Xj)
+				t_pair = reshape(Xi(1,:), 1, 1, []);
+				scale_i = obj.length_scale_time_scale(t_pair);
+				scale_j = scale_i;
+			else
+				t_i = reshape(Xi(1,:), 1, [], 1);
+				t_j = reshape(Xj(1,:), 1, 1, []);
+				scale_i = obj.length_scale_time_scale(t_i);
+				scale_j = obj.length_scale_time_scale(t_j);
+			end
+			length_scale_i = base_length_scale .* scale_i;
+			length_scale_j = base_length_scale .* scale_j;
+			length_scale_sq = 0.5 * ...
+				(length_scale_i .^ 2 + length_scale_j .^ 2);
+			amplitude_scale = prod(sqrt((2.0 .* length_scale_i .* ...
+				length_scale_j) ./ (length_scale_i .^ 2 + ...
+				length_scale_j .^ 2)), 1);
+		end
+		%% 给定一个 query point x，返回该点对应的 length scale 平方
+		function length_scale_sq = query_length_scale_sq(obj, x)
+			scale = obj.length_scale_time_scale(x(1));
+			length_scale_sq = (obj.SigmaL(:) .* scale) .^ 2;
+		end
+		%% 计算 kernel 对 query point x 的梯度
+		function dk_dquery = kernel_query_gradient(obj, X_set, x, Ktx_now)
+			diff = x' - X_set';
+			if ~obj.LengthScaleTimeVarying
+				length_scale_sq = obj.SigmaL(:) .^ 2;
+				dk_dquery = -(diff ./ length_scale_sq') .* Ktx_now;
+				return;
+			end
+
+			[length_scale_sq, ~] = obj.kernel_scale_terms(X_set, x);
+			length_scale_sq = reshape(length_scale_sq, obj.x_dim, []);
+			dX = X_set - reshape(x, [], 1);
+			k_row = reshape(Ktx_now, 1, []);
+			dk_by_dim = (dX ./ length_scale_sq) .* k_row;
+
+			base_length_scale = obj.SigmaL(:);
+			scale_train = obj.length_scale_time_scale(reshape(X_set(1,:), 1, []));
+			scale_query = obj.length_scale_time_scale(x(1));
+			dscale_query = obj.length_scale_time_scale_derivative(x(1));
+			ell_train = base_length_scale .* scale_train;
+			ell_query = base_length_scale .* scale_query;
+			dell_query_dt = base_length_scale .* dscale_query;
+			length_scale_sum_sq = ell_train .^ 2 + ell_query .^ 2;
+			d_length_scale_sq_dt = ell_query .* dell_query_dt;
+
+			d_log_amplitude_dt = 0.5 * sum( ...
+				(dell_query_dt ./ ell_query) - ...
+				(2.0 .* ell_query .* dell_query_dt) ./ ...
+				length_scale_sum_sq, 1);
+			d_exponent_length_dt = 0.5 * sum( ...
+				(dX .^ 2 .* d_length_scale_sq_dt) ./ ...
+				(length_scale_sq .^ 2), 1);
+			d_log_kernel_dt = dX(1,:) ./ length_scale_sq(1,:) + ...
+				d_exponent_length_dt + d_log_amplitude_dt;
+			dk_by_dim(1,:) = d_log_kernel_dt .* k_row;
+			dk_dquery = dk_by_dim';
 		end
 		%% Add Point
 		function flag = addPoint(obj, x, y)
@@ -135,7 +225,7 @@ classdef LocalGP_MultiOutput < handle
 
 				old_K = obj.K(1:(LocalGP_DataQuantity - 1),1:(LocalGP_DataQuantity - 1));
 				old_L = obj.L(1:(LocalGP_DataQuantity - 1),1:(LocalGP_DataQuantity - 1));
-				
+
 
 				b = obj.kernel(old_X,new_x);
 				c = obj.kernel(new_x,new_x) + obj.SigmaN ^ 2;
@@ -222,7 +312,7 @@ classdef LocalGP_MultiOutput < handle
 			obj.DataQuantity = AllDataQuantity;
 			obj.X(:,1:obj.DataQuantity) = X_in(:,1:obj.DataQuantity);
 			obj.Y(1:obj.DataQuantity,:) = Y_in(1:obj.DataQuantity,:);
-			
+
 			obj.updateParam_Alldata;
 		end
 		%% Update the parameter for all the data
@@ -254,23 +344,22 @@ classdef LocalGP_MultiOutput < handle
 			else
 				X_set = obj.X(:,1:LocalGP_DataQuantity);
 				% Variance
-				temp_L_now = obj.L(1:LocalGP_DataQuantity,1:LocalGP_DataQuantity);
+				temp_L = obj.L(1:LocalGP_DataQuantity,1:LocalGP_DataQuantity);
 				Ktx_now = obj.kernel(X_set, x);
-				v_now = temp_L_now \ Ktx_now;
-				var = obj.kernel(x) - v_now' * v_now;
+				v_now = temp_L \ Ktx_now;
+				var = obj.kernel(x) - v_now'*v_now;
 				if var < 0
 					var = 0;
 				end
 				var = var * ones(obj.y_dim,1);
 				% Mean Value
 				mu = obj.aux_alpha(1:LocalGP_DataQuantity,:)' * v_now;
-				obj.v(1:LocalGP_DataQuantity,:) = v_now;
-			end
+				end
 			% Error Bound
 			[beta,gamma] = obj.set_ErrorBound(x);
 			try
 				eta = sqrt(beta) * sqrt(max(var)) + gamma;
-				
+
 			catch
 				eta = nan;
 			end
@@ -316,12 +405,9 @@ classdef LocalGP_MultiOutput < handle
 				var = 0;
 			end
 
-			diff = x' - X_set';
-			length_scale_sq = obj.SigmaL .^ 2;
-			dk_dx = -(diff ./ length_scale_sq') .* Ktx_now;
+			dk_dx = obj.kernel_query_gradient(X_set, x, Ktx_now);
 			grad = -2.0 * sum(dk_dx .* weights_now, 1);
 
-			obj.v(1:LocalGP_DataQuantity,:) = v_now;
 		end
 		%% Error Bound
 		function [beta,gamma] = set_ErrorBound(obj,x)
@@ -347,7 +433,7 @@ classdef LocalGP_MultiOutput < handle
 			end
 			obj.Lmu = norm(obj.Lmu_set);
 			gamma = (obj.Lmu + obj.Lf) * obj.tau + sqrt(obj.y_dim * beta) * obj.Lsigma * obj.tau;
-			
+
 		end
 		%% Check Saturation
 		function is_Saturated = check_Saturation(obj)
@@ -357,7 +443,7 @@ classdef LocalGP_MultiOutput < handle
 				is_Saturated = false;
 			end
 		end
-		%% 
+		%%
 	end
 
 

@@ -1,26 +1,47 @@
-% Plot the main MATLAB summary figure:
+% 绘制三列摘要图：目标轨迹、source 轨迹、roll out 轨迹
 function plot_results(cfg, target_points, source_points, reconstructed_points)
-%% Output Path
 this_file = mfilename('fullpath');
 this_dir = fileparts(this_file);
 output_dir = fullfile(this_dir, 'outputs');
-output_enabled = ~isfield(cfg, 'output') || ...
-    ~isfield(cfg.output, 'enabled') || cfg.output.enabled;
-if output_enabled && ~exist(output_dir, 'dir')
+if cfg.output.enabled && ~exist(output_dir, 'dir')
     mkdir(output_dir);
 end
 output_path = fullfile(output_dir, 'gp_flow_matching_demo_matlab.emf');
 
-%% Figure Layout
 fig = figure('Color', 'w', 'WindowStyle', 'normal', ...
     'Units', 'normalized', 'Position', [0.08, 0.18, 0.84, 0.48]);
 movegui(fig, 'center');
-
 tiledlayout(1, 3, 'TileSpacing', 'compact', 'Padding', 'compact');
 
-%% Shared Target/Rollout Axis Limits
+% 计算目标和rollout的联合坐标范围，使三列图共享轴限
+use_segment_plot = isfield(cfg, 'segment_plot_data') && ...
+    ~isempty(cfg.segment_plot_data) && ...
+    isfield(cfg, 'segment_plot_count') && cfg.segment_plot_count > 0 && ...
+    isfield(cfg, 'segment_plot_points_per_segment');
+if use_segment_plot
+    segment_data = cfg.segment_plot_data;
+    n_segments = cfg.segment_plot_count;
+    n_points = cfg.segment_plot_points_per_segment;
+    feature_dim = size(segment_data, 2) / n_points;
+    n_segment_samples = floor(size(segment_data, 1) / n_segments);
+else
+    segment_data = [];
+    n_segments = 0;
+    n_points = 0;
+    feature_dim = 0;
+    n_segment_samples = 0;
+end
 target_xy = reshape(target_points(:, :, 1:2), [], 2);
-rollout_xy = reshape(reconstructed_points(:, :, 1:2), [], 2);
+if isempty(reconstructed_points)
+    rollout_xy = zeros(0, 2);
+else
+    rollout_xy = reshape(reconstructed_points(:, :, 1:2), [], 2);
+end
+if use_segment_plot
+    seg_curves = reshape(segment_data', feature_dim, n_points, []);
+    seg_xy = permute(seg_curves(1:2, :, :), [2, 3, 1]);
+    rollout_xy = [rollout_xy; reshape(seg_xy, [], 2)];
+end
 comparison_xy = [target_xy; rollout_xy];
 comparison_xy = comparison_xy(all(isfinite(comparison_xy), 2), :);
 x_limits = [min(comparison_xy(:, 1)), max(comparison_xy(:, 1))];
@@ -50,7 +71,7 @@ title(sprintf('Target Trajectory Data (2D, %d Points)', size(target_points, 1)))
 %% Source Trajectories
 nexttile;
 hold on;
-max_curves = min(size(source_points, 2), cfg.n_trajectories);
+max_curves = min(size(source_points, 2), cfg.first_level_generation_samples);
 for idx = 1:max_curves
     source_curve = squeeze(source_points(:, idx, 1:2));
     plot(source_curve(:, 1), source_curve(:, 2), '--', 'LineWidth', 0.9);
@@ -64,86 +85,73 @@ title('ODE Source Trajectories');
 %% Rollout Trajectories
 nexttile;
 hold on;
-max_curves = min(size(reconstructed_points, 2), cfg.n_trajectories);
-fprintf('Plotting rollout sample curves: %d / %d\n', ...
-    max_curves, size(reconstructed_points, 2));
-rollout_colors = lines(max(max_curves, 1));
-for idx = 1:max_curves
-    reconstructed_curve = squeeze(reconstructed_points(:, idx, 1:2));
-    if idx == 1
-        plot(reconstructed_curve(:, 1), reconstructed_curve(:, 2), ...
-            'Color', rollout_colors(idx, :), 'LineWidth', 1.1, ...
-            'DisplayName', get_cfg_label(cfg, ...
-            'sample_curve_label', 'Stage 2 sample curves'));
-    else
-        plot(reconstructed_curve(:, 1), reconstructed_curve(:, 2), ...
-            'Color', rollout_colors(idx, :), 'LineWidth', 1.1, ...
-            'HandleVisibility', 'off');
-    end
+if use_segment_plot
+    max_curves = min(n_segment_samples, cfg.first_level_generation_samples);
+    total_rollout_curves = n_segment_samples;
+else
+    max_curves = min(size(reconstructed_points, 2), ...
+        cfg.first_level_generation_samples);
+    total_rollout_curves = size(reconstructed_points, 2);
 end
-if max_curves > 0
-    anchor_idx = 1:(cfg.segment_points_per_segment - 1): ...
-        size(reconstructed_points, 1);
-    refined_idx = setdiff(1:size(reconstructed_points, 1), anchor_idx);
-    for idx = 1:max_curves
-        refined_curve = squeeze(reconstructed_points(refined_idx, idx, :));
-        refined_curve = refined_curve(:, 1:2);
-        if idx == 1
-            plot(refined_curve(:, 1), refined_curve(:, 2), 'o', ...
-                'Color', rollout_colors(idx, :), ...
-                'MarkerFaceColor', rollout_colors(idx, :), ...
-                'MarkerSize', 4, ...
-                'LineStyle', 'none', ...
-                'DisplayName', get_cfg_label(cfg, ...
-                'generated_point_label', 'Stage 2 generated points'));
-        else
-            plot(refined_curve(:, 1), refined_curve(:, 2), 'o', ...
-                'Color', rollout_colors(idx, :), ...
-                'MarkerFaceColor', rollout_colors(idx, :), ...
-                'MarkerSize', 4, ...
-                'LineStyle', 'none', ...
-                'HandleVisibility', 'off');
-        end
-    end
-    if isfield(cfg, 'reference_points') && ~isempty(cfg.reference_points)
-        reference_points = cfg.reference_points;
-        n_reference_curves = min(size(reference_points, 2), max_curves);
-        reference_label = 'Training reference curve';
-        if isfield(cfg, 'reference_label')
-            reference_label = cfg.reference_label;
-        end
-        if isfield(cfg, 'reference_curve_count')
-            n_reference_curves = min(n_reference_curves, ...
-                cfg.reference_curve_count);
-        end
-        for idx = 1:n_reference_curves
-            reference_curve = squeeze(reference_points(:, idx, :));
-            reference_curve = reference_curve(:, 1:2);
-            if idx == 1
-                plot(reference_curve(:, 1), reference_curve(:, 2), ...
-                    'Color', [0.9, 0.0, 0.0], 'LineStyle', '-', ...
-                    'LineWidth', 3.0, 'DisplayName', reference_label);
+fprintf('Plotting rollout sample curves: %d / %d\n', ...
+    max_curves, total_rollout_curves);
+rollout_colors = lines(max(max_curves, 1));
+if use_segment_plot
+    curve_label = struct_field_default(cfg, 'sample_curve_label', 'Stage 2 sample curves');
+    marker_label = struct_field_default(cfg, 'generated_point_label', 'Stage 2 generated points');
+    for traj_idx = 1:max_curves
+        for segment_idx = 1:n_segments
+            sample_idx = (traj_idx - 1) * n_segments + segment_idx;
+            if sample_idx > size(segment_data, 1)
+                continue;
+            end
+            segment_curve = reshape(segment_data(sample_idx, :), feature_dim, [])';
+            segment_curve = segment_curve(:, 1:2);
+            color = rollout_colors(traj_idx, :);
+            if traj_idx == 1 && segment_idx == 1
+                plot(segment_curve(:, 1), segment_curve(:, 2), ...
+                    'Color', color, 'LineWidth', 1.1, 'DisplayName', curve_label);
+                plot(segment_curve(:, 1), segment_curve(:, 2), 'o', ...
+                    'Color', color, 'MarkerFaceColor', color, ...
+                    'MarkerSize', 4, 'LineStyle', 'none', 'DisplayName', marker_label);
             else
-                plot(reference_curve(:, 1), reference_curve(:, 2), ...
-                    'Color', [0.9, 0.0, 0.0], 'LineStyle', '-', ...
-                    'LineWidth', 2.0, 'HandleVisibility', 'off');
+                plot(segment_curve(:, 1), segment_curve(:, 2), ...
+                    'Color', color, 'LineWidth', 1.1, 'HandleVisibility', 'off');
+                plot(segment_curve(:, 1), segment_curve(:, 2), 'o', ...
+                    'Color', color, 'MarkerFaceColor', color, ...
+                    'MarkerSize', 4, 'LineStyle', 'none', 'HandleVisibility', 'off');
             end
         end
     end
+else
     for idx = 1:max_curves
-        anchor_curve = squeeze(reconstructed_points(anchor_idx, idx, :));
-        anchor_curve = anchor_curve(:, 1:2);
+        reconstructed_curve = squeeze(reconstructed_points(:, idx, 1:2));
         if idx == 1
-            plot(anchor_curve(:, 1), anchor_curve(:, 2), 'ks-', ...
-                'LineWidth', 1.5, 'MarkerSize', 7, ...
-                'MarkerFaceColor', 'w', ...
-                'DisplayName', get_cfg_label(cfg, ...
-                'anchor_label', 'Stage 1 fixed anchors'));
+            plot(reconstructed_curve(:, 1), reconstructed_curve(:, 2), ...
+                'Color', rollout_colors(idx, :), 'LineWidth', 1.1, ...
+                'DisplayName', struct_field_default(cfg, ...
+                'sample_curve_label', 'Stage 2 sample curves'));
         else
-            plot(anchor_curve(:, 1), anchor_curve(:, 2), 'ks-', ...
-                'LineWidth', 1.0, 'MarkerSize', 5, ...
-                'MarkerFaceColor', 'w', ...
+            plot(reconstructed_curve(:, 1), reconstructed_curve(:, 2), ...
+                'Color', rollout_colors(idx, :), 'LineWidth', 1.1, ...
                 'HandleVisibility', 'off');
+        end
+    end
+end
+if isfield(cfg, 'reference_points') && ~isempty(cfg.reference_points)
+    reference_points = cfg.reference_points;
+    n_reference_curves = min(size(reference_points, 2), max_curves);
+    for idx = 1:n_reference_curves
+        reference_curve = squeeze(reference_points(:, idx, :));
+        reference_curve = reference_curve(:, 1:2);
+        if idx == 1
+            plot(reference_curve(:, 1), reference_curve(:, 2), ...
+                'Color', [0.9, 0.0, 0.0], 'LineStyle', '-', ...
+                'LineWidth', 3.0, 'DisplayName', 'Training reference curve');
+        else
+            plot(reference_curve(:, 1), reference_curve(:, 2), ...
+                'Color', [0.9, 0.0, 0.0], 'LineStyle', '-', ...
+                'LineWidth', 2.0, 'HandleVisibility', 'off');
         end
     end
 end
@@ -153,28 +161,23 @@ xlim(x_limits);
 ylim(y_limits);
 xlabel('x');
 ylabel('y');
-title(sprintf('ODE Rollout Trajectories (%d Points, %d Samples)', ...
-    size(reconstructed_points, 1), max_curves));
-legend_location = 'northeastoutside';
-if isfield(cfg, 'legend_location') && ~isempty(cfg.legend_location)
-    legend_location = cfg.legend_location;
+if use_segment_plot
+    title(sprintf('ODE Rollout Trajectories (%d Segments x %d Points, %d Samples)', ...
+        cfg.segment_plot_count, cfg.segment_plot_points_per_segment, ...
+        max_curves));
+else
+    title(sprintf('ODE Rollout Trajectories (%d Points, %d Samples)', ...
+        size(reconstructed_points, 1), max_curves));
 end
-legend_font_size = 8;
-if isfield(cfg, 'legend_font_size') && ~isempty(cfg.legend_font_size)
-    legend_font_size = cfg.legend_font_size;
-end
-lgd = legend('Location', legend_location);
-lgd.FontSize = legend_font_size;
+lgd = legend('Location', 'northeastoutside');
+lgd.FontSize = 8;
 lgd.ItemTokenSize = [14, 8];
 
-if output_enabled
-    exportgraphics(fig, output_path, 'ContentType', 'vector');
+if cfg.output.enabled
+    local_export_graphics(fig, output_path);
 end
 end
 
-function label = get_cfg_label(cfg, field_name, default_label)
-label = default_label;
-if isfield(cfg, field_name) && ~isempty(cfg.(field_name))
-    label = cfg.(field_name);
-end
+function local_export_graphics(target, output_path)
+export_graphics_compat(target, output_path);
 end
