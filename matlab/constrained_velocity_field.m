@@ -1,4 +1,4 @@
-% 计算轨迹空间的速度场，若有约束则用 PT-HOCBF 修正
+% Compute trajectory-space velocity, optionally corrected by HOCBF/PTCBF.
 function [v, diagnostics] = constrained_velocity_field(model_collection, t, x, ...
     constraint_cfg, cumulative_variance, gp_velocity)
 model = model_collection.model;

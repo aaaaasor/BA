@@ -17,19 +17,48 @@ diagnostics.rollout_elapsed_seconds = 0.0; % 初始化 roll-out 时间统计
 %% RK4 Integration
 rollout_timer = tic; % 从开始到现在总共多久
 batch_timer = tic; % 每隔10个sample打印一次进度时，用来显示这一批花了多少秒
+beta0_values = nan(n_samples, 1);
+if constrained
+	for beta_sample_idx = 1:n_samples
+		x0 = reshape(x_init(beta_sample_idx, :), [], 1);
+		beta0_values(beta_sample_idx) = sum(arrayfun(@(i) ...
+			model_collection.model.output_models{i}.predict_variance([times(1); x0]), ...
+			1:numel(model_collection.model.output_models)));
+	end
+	if struct_field_default(constraint_cfg, ...
+			'terminal_variance_enabled', false)
+		beta_final = constraint_cfg.terminal_variance_beta_final;
+		terminal_margin = struct_field_default(constraint_cfg, ...
+			'terminal_variance_ptzf_initial_margin', 1e-6);
+		terminal_h0_global = max(max(beta0_values) - beta_final, 0.0) + ...
+			terminal_margin;
+		constraint_cfg.terminal_variance_ptzf_hbar0 = terminal_h0_global;
+		fprintf(['  terminal global hbar0=%.3f from max beta0=%.3f, ', ...
+			'beta_final=%.3f, margin=%.3g\n'], terminal_h0_global, ...
+			max(beta0_values), beta_final, terminal_margin);
+	end
+end
 for sample_idx = 1:n_samples
 	cumulative_variance_now = 0.0; % 这条 sample 到当前时间为止累计的总方差积分
 	if constrained
 		% 根据初始方差动态计算 alpha1，保证 psi_1(0) >= psi1_margin
-		x0 = reshape(x_init(sample_idx, :), [], 1); % 当前 sample 的初始状态
-		beta0 = sum(arrayfun(@(i) ...
-			model_collection.model.output_models{i}.predict_variance([times(1); x0]), ...
-			1:numel(model_collection.model.output_models))); % 计算初始时刻的 GP 总预测方差
-		h0 = constraint_cfg.ptzf_initial_bound;
-		gamma = constraint_cfg.ptzf_gamma;
+		beta0 = beta0_values(sample_idx); % 计算初始时刻的 GP 总预测方差
+		h0 = constraint_cfg.hocbf_relaxation_bound;
 		B = constraint_cfg.integral_uncertainty_budget;
-		alpha1_computed = gamma + (beta0 - B) / h0 + constraint_cfg.psi1_margin / h0;
-		fprintf('  sample %d: beta0=%.3f, B=%.3f, alpha1=%.3f\n', sample_idx, beta0, B, alpha1_computed);
+		alpha1_computed = (beta0 - B) / h0 + constraint_cfg.psi1_margin / h0;
+		if struct_field_default(constraint_cfg, ...
+				'terminal_variance_enabled', false)
+			terminal_margin = struct_field_default(constraint_cfg, ...
+				'terminal_variance_ptzf_initial_margin', 1e-6);
+			terminal_h0 = terminal_h0_global;
+			constraint_cfg.terminal_variance_ptzf_hbar0 = terminal_h0;
+			fprintf(['  sample %d: beta0=%.3f, B=%.3f, ', ...
+				'alpha1=%.3f, terminal global hbar0=%.3f, terminal margin=%.3g\n'], ...
+				sample_idx, beta0, B, alpha1_computed, ...
+				terminal_h0, terminal_margin);
+		else
+			fprintf('  sample %d: beta0=%.3f, B=%.3f, alpha1=%.3f\n', sample_idx, beta0, B, alpha1_computed);
+		end
 		constraint_cfg.hocbf_alpha1 = alpha1_computed;
 	end
 	for step_idx = 1:n_steps % 对当前 sample 的每个时间步进行积分

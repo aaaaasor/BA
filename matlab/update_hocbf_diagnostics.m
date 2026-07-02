@@ -29,6 +29,9 @@ hocbf_diag.trace_rho_components(end + 1, :) = [ ...
 	info.rho_beta_t, info.rho_grad_beta_mu, ...
 	info.rho_minus_h_bar_ddot, info.rho_minus_alpha1_psi0_dot, ...
 	info.rho_minus_alpha2_psi1];
+hocbf_diag.trace_integral_bound(end + 1, 1) = info.integral_bound;
+hocbf_diag.trace_hocbf_constraint_residual(end + 1, 1) = ...
+	info.hocbf_constraint_residual;
 u_now = reshape(info.u, 1, []);
 hocbf_diag.trace_u(end + 1, 1:numel(u_now)) = u_now;
 hocbf_diag.trace_correction_norm(end + 1, 1) = info.correction_norm;
@@ -39,6 +42,22 @@ hocbf_diag.trace_h_bar(end + 1, 1) = info.h_bar;
 hocbf_diag.trace_sigma2(end + 1, 1) = info.sigma2;
 hocbf_diag.trace_cumulative_variance(end + 1, 1) = info.cumulative_variance;
 hocbf_diag.trace_time_average_variance(end + 1, 1) = info.time_average_variance;
+hocbf_diag.trace_terminal_ptzf_initial_bound(end + 1, 1) = ...
+	info.terminal_ptzf_initial_bound;
+hocbf_diag.trace_terminal_ptzf_bound(end + 1, 1) = info.terminal_ptzf_bound;
+hocbf_diag.trace_terminal_ptzf_bound_dot(end + 1, 1) = ...
+	info.terminal_ptzf_bound_dot;
+hocbf_diag.trace_terminal_inequality_h(end + 1, 1) = ...
+	info.terminal_inequality_h;
+hocbf_diag.trace_terminal_beta_cap(end + 1, 1) = info.terminal_beta_cap;
+hocbf_diag.trace_terminal_beta_cap_dot(end + 1, 1) = info.terminal_beta_cap_dot;
+hocbf_diag.trace_terminal_h(end + 1, 1) = info.terminal_h;
+hocbf_diag.trace_terminal_bound(end + 1, 1) = info.terminal_bound;
+hocbf_diag.trace_terminal_constraint_residual(end + 1, 1) = ...
+	info.terminal_constraint_residual;
+hocbf_diag.trace_qp_exitflag(end + 1, 1) = info.qp_exitflag;
+hocbf_diag.trace_qp_active_constraint_count(end + 1, 1) = ...
+	info.qp_active_constraint_count;
 hocbf_diag.max_correction_norm = max(hocbf_diag.max_correction_norm, info.correction_norm);
 hocbf_diag.max_grad_norm = max(hocbf_diag.max_grad_norm, info.grad_norm);
 hocbf_diag.max_sigma2 = max(hocbf_diag.max_sigma2, info.sigma2);
@@ -62,4 +81,26 @@ if isfinite(info.psi1) && info.psi1 < hocbf_diag.min_psi1
 end
 hocbf_diag.min_psi2 = min(hocbf_diag.min_psi2, info.psi2);
 hocbf_diag.max_hocbf_constraint_residual = max(hocbf_diag.max_hocbf_constraint_residual, info.hocbf_constraint_residual);
+if isfinite(info.terminal_h) && info.terminal_h < hocbf_diag.min_terminal_h
+	hocbf_diag.min_terminal_h = info.terminal_h;
+	hocbf_diag.min_terminal_h_sample_idx = sample_idx;
+	hocbf_diag.min_terminal_h_step_idx = step_idx;
+	hocbf_diag.min_terminal_h_stage = stage_name;
+	hocbf_diag.min_terminal_h_t = info.t;
+	hocbf_diag.min_terminal_h_sigma2 = info.sigma2;
+	hocbf_diag.min_terminal_h_inequality_h = info.terminal_inequality_h;
+	hocbf_diag.min_terminal_h_ptzf_bound = info.terminal_ptzf_bound;
+	hocbf_diag.min_terminal_h_beta_cap = info.terminal_beta_cap;
+	hocbf_diag.min_terminal_h_residual = info.terminal_constraint_residual;
+end
+hocbf_diag.max_terminal_constraint_residual = max( ...
+	hocbf_diag.max_terminal_constraint_residual, ...
+	info.terminal_constraint_residual);
+if isfinite(info.qp_exitflag)
+	hocbf_diag.min_qp_exitflag = min(hocbf_diag.min_qp_exitflag, ...
+		info.qp_exitflag);
+end
+hocbf_diag.max_qp_active_constraint_count = max( ...
+	hocbf_diag.max_qp_active_constraint_count, ...
+	info.qp_active_constraint_count);
 end

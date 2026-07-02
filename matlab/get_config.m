@@ -8,7 +8,7 @@ cfg.first_level_time_steps = 100;
 cfg.second_level_time_steps = 100;
 cfg.third_level_time_steps = 100;
 cfg.t_min = 0.0;
-cfg.rollout_t_max = 0.99;
+cfg.rollout_t_max = 0.995;
 cfg.random_seed = 7;
 cfg.first_level_data_seed = cfg.random_seed + 1;
 cfg.first_level_hyperparameter_seed = cfg.random_seed + 2;
@@ -77,23 +77,24 @@ cfg.gp.second_level_training_accuracy_threshold = 0.1;
 cfg.gp.third_level_training_accuracy_threshold = 0.0005;
 %% Variance Constraint
 cfg.variance_constraint.grad_tol = 1e-6;
-cfg.variance_constraint.control_activation_time = 0.0;
-cfg.variance_constraint.second_level_integral_uncertainty_budget = 0.1;
+cfg.variance_constraint.second_level_integral_uncertainty_budget = 3;
 cfg.variance_constraint.second_level_hocbf_alpha2 = 5;
-cfg.variance_constraint.second_level_ptzf_gamma = 0;
-cfg.variance_constraint.second_level_ptzf_initial_bound = 4.5;
-cfg.variance_constraint.second_level_ptzf_use_cubic_blowup = false;
-cfg.variance_constraint.second_level_psi1_margin = 50.0;
+cfg.variance_constraint.second_level_hocbf_relaxation_bound = 3;
+cfg.variance_constraint.second_level_psi1_margin = 40.0;
 cfg.variance_constraint.second_level_diagnostics = true;
+cfg.variance_constraint.second_level_terminal_variance_enabled = true;
+cfg.variance_constraint.second_level_terminal_variance_beta_final = 1;
+cfg.variance_constraint.second_level_terminal_variance_ptzf_initial_margin = 1;
+cfg.variance_constraint.second_level_terminal_variance_ptzf_gamma = 0.5;
+cfg.variance_constraint.second_level_terminal_variance_alpha = 10.0;
 cfg.variance_constraint.third_level_integral_uncertainty_budget = 5.76;
 cfg.variance_constraint.third_level_hocbf_alpha2 = 5.0;
-cfg.variance_constraint.third_level_ptzf_gamma = 8.0;
-cfg.variance_constraint.third_level_ptzf_initial_bound = 8.0;
-cfg.variance_constraint.third_level_ptzf_use_cubic_blowup = false;
+cfg.variance_constraint.third_level_hocbf_relaxation_bound = 8.0;
 cfg.variance_constraint.third_level_psi1_margin = 1.0;
 cfg.variance_constraint.third_level_diagnostics = true;
-if cfg.variance_constraint.second_level_ptzf_use_cubic_blowup
-    cfg.cache.second_level_rollout_path = fullfile('outputs', ...
-        'LoG_GP_SecondLevel_Rollout_WithUFrom0_alpha2_0p01_gamma_0p01_h0_0p01_p3.mat');
-end
+cfg.variance_constraint.third_level_terminal_variance_enabled = false;
+cfg.variance_constraint.third_level_terminal_variance_beta_final = 1.0;
+cfg.variance_constraint.third_level_terminal_variance_ptzf_initial_margin = 1e-6;
+cfg.variance_constraint.third_level_terminal_variance_ptzf_gamma = 0.001;
+cfg.variance_constraint.third_level_terminal_variance_alpha = 5.0;
 end
