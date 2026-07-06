@@ -51,13 +51,51 @@ has_constraint_traces = isfield(trace, 'trace_integral_bound') && ...
 if has_constraint_traces
     integral_bound = trace.trace_integral_bound(:);
     terminal_bound = trace.trace_terminal_bound(:);
-    hocbf_residual = trace.trace_hocbf_constraint_residual(:);
-    terminal_residual = trace.trace_terminal_constraint_residual(:);
+    if isfield(trace, 'trace_hocbf_relaxed_constraint_residual') && ...
+            ~isempty(trace.trace_hocbf_relaxed_constraint_residual)
+        hocbf_residual = trace.trace_hocbf_relaxed_constraint_residual(:);
+    else
+        hocbf_residual = trace.trace_hocbf_constraint_residual(:);
+    end
+    if isfield(trace, 'trace_terminal_relaxed_constraint_residual') && ...
+            ~isempty(trace.trace_terminal_relaxed_constraint_residual)
+        terminal_residual = trace.trace_terminal_relaxed_constraint_residual(:);
+    else
+        terminal_residual = trace.trace_terminal_constraint_residual(:);
+    end
 else
     integral_bound = [];
     terminal_bound = [];
     hocbf_residual = [];
     terminal_residual = [];
+end
+if has_constraint_traces
+    if isfield(trace, 'trace_hocbf_enabled') && ...
+            ~isempty(trace.trace_hocbf_enabled)
+        hocbf_enabled_trace = logical(trace.trace_hocbf_enabled(:));
+    else
+        hocbf_enabled_trace = true(size(trace_t));
+    end
+    integral_bound(~hocbf_enabled_trace) = nan;
+    hocbf_residual(~hocbf_enabled_trace) = nan;
+    if isfield(trace, 'trace_ptcbf_enabled') && ...
+            ~isempty(trace.trace_ptcbf_enabled)
+        terminal_enabled_trace = logical(trace.trace_ptcbf_enabled(:));
+        terminal_bound(~terminal_enabled_trace) = nan;
+        terminal_residual(~terminal_enabled_trace) = nan;
+    end
+end
+has_anchor_clf_traces = isfield(trace, 'trace_anchor_clf_bound') && ...
+    isfield(trace, 'trace_anchor_clf_residual') && ...
+    ~isempty(trace.trace_anchor_clf_bound) && ...
+    ~isempty(trace.trace_anchor_clf_residual) && ...
+    any(isfinite(trace.trace_anchor_clf_bound));
+if has_anchor_clf_traces
+    anchor_clf_bound = trace.trace_anchor_clf_bound(:);
+    anchor_clf_residual = trace.trace_anchor_clf_residual(:);
+else
+    anchor_clf_bound = [];
+    anchor_clf_residual = [];
 end
 barrier_b = trace.trace_barrier_b(:);
 relaxed_barrier_b = trace.trace_relaxed_barrier_b(:);
@@ -83,6 +121,10 @@ if has_constraint_traces
     terminal_bound = terminal_bound(sort_idx);
     hocbf_residual = hocbf_residual(sort_idx);
     terminal_residual = terminal_residual(sort_idx);
+end
+if has_anchor_clf_traces
+    anchor_clf_bound = anchor_clf_bound(sort_idx);
+    anchor_clf_residual = anchor_clf_residual(sort_idx);
 end
 barrier_b = barrier_b(sort_idx);
 relaxed_barrier_b = relaxed_barrier_b(sort_idx);
@@ -158,15 +200,24 @@ if has_constraint_traces
         plot(trace_t(rows_now), terminal_bound(rows_now), ...
             'Color', [0.85, 0.20, 0.20], 'LineWidth', 0.9, ...
             'HandleVisibility', 'off');
+        if has_anchor_clf_traces
+            plot(trace_t(rows_now), anchor_clf_bound(rows_now), ...
+                'Color', [0.45, 0.20, 0.75], 'LineWidth', 0.9, ...
+                'HandleVisibility', 'off');
+        end
     end
     plot(nan, nan, '-', 'Color', [0.10, 0.55, 0.25], ...
         'LineWidth', 0.9, 'DisplayName', 'integral bound');
     plot(nan, nan, '-', 'Color', [0.85, 0.20, 0.20], ...
         'LineWidth', 0.9, 'DisplayName', 'terminal bound');
+    if has_anchor_clf_traces
+        plot(nan, nan, '-', 'Color', [0.45, 0.20, 0.75], ...
+            'LineWidth', 0.9, 'DisplayName', 'anchor PTCLF bound');
+    end
     grid on;
     xlabel('s');
-    ylabel('QP bound');
-    title('QP upper bounds: smaller bound is tighter');
+    ylabel('raw QP bound');
+    title('Raw QP upper bounds before slack: smaller bound is tighter');
     legend('Location', 'best');
 
     nexttile;
@@ -179,6 +230,11 @@ if has_constraint_traces
         plot(trace_t(rows_now), terminal_residual(rows_now), ...
             'Color', [0.85, 0.20, 0.20], 'LineWidth', 0.9, ...
             'HandleVisibility', 'off');
+        if has_anchor_clf_traces
+            plot(trace_t(rows_now), anchor_clf_residual(rows_now), ...
+                'Color', [0.45, 0.20, 0.75], 'LineWidth', 0.9, ...
+                'HandleVisibility', 'off');
+        end
     end
     yline(0, '--', 'Color', [0.20, 0.20, 0.20], ...
         'LineWidth', 1.0, 'DisplayName', '0');
@@ -186,9 +242,13 @@ if has_constraint_traces
         'LineWidth', 0.9, 'DisplayName', 'integral residual');
     plot(nan, nan, '-', 'Color', [0.85, 0.20, 0.20], ...
         'LineWidth', 0.9, 'DisplayName', 'terminal residual');
+    if has_anchor_clf_traces
+        plot(nan, nan, '-', 'Color', [0.45, 0.20, 0.75], ...
+            'LineWidth', 0.9, 'DisplayName', 'anchor PTCLF residual');
+    end
     grid on;
     xlabel('s');
-    ylabel('A u - b');
+    ylabel('A u - b - slack');
     title('QP constraint residuals: should be <= 0');
     legend('Location', 'best');
 end
@@ -198,20 +258,16 @@ if cfg.output.enabled
     output_dir = fullfile(fileparts(this_file), 'outputs');
     if ~exist(output_dir, 'dir'); mkdir(output_dir); end
     output_path = fullfile(output_dir, 'trajectory_gp_hocbf_psi_trace_matlab.emf');
-    local_export_graphics(fig, output_path);
+    export_graphics_compat(fig, output_path);
     if exist('fig_integral', 'var') && isgraphics(fig_integral, 'figure')
         integral_output_path = fullfile(output_dir, ...
             'trajectory_gp_hocbf_integral_budget_trace_matlab.emf');
-        local_export_graphics(fig_integral, integral_output_path);
+        export_graphics_compat(fig_integral, integral_output_path);
     end
     if exist('fig_qp', 'var') && isgraphics(fig_qp, 'figure')
         qp_output_path = fullfile(output_dir, ...
             'trajectory_gp_hocbf_ptcbf_qp_constraints_matlab.emf');
-        local_export_graphics(fig_qp, qp_output_path);
+        export_graphics_compat(fig_qp, qp_output_path);
     end
 end
-end
-
-function local_export_graphics(target, output_path)
-export_graphics_compat(target, output_path);
 end

@@ -23,17 +23,42 @@ if cache_enabled && isfile(cache_path)
             cache_label, err.message);
     end
     if isfield(cached_data, 'model_collection')
-        model_collection = cached_data.model_collection;
-        model_collection.cache_label = cache_label;
-        disp(['Loaded cached ', cache_label, ' LoG-GP model: ', char(cache_path)]);
-        return;
+        cached_model_collection = cached_data.model_collection;
+        expected_input_dim = size(x_slices, 3) + 1;
+        expected_y_dim = size(y_slices, 3);
+        cache_matches_dims = isfield(cached_model_collection, ...
+            'input_dim') && ...
+            isequaln(cached_model_collection.input_dim, expected_input_dim) && ...
+            isfield(cached_model_collection, 'y_dim') && ...
+            isequaln(cached_model_collection.y_dim, expected_y_dim);
+        cache_matches_training_cfg = isfield(cached_model_collection, ...
+            'training_accuracy_threshold') && ...
+            isequaln(cached_model_collection.training_accuracy_threshold, ...
+            gp.training_accuracy_threshold);
+        needs_sample_order = isfield(gp, 'training_sample_order');
+        cache_matches_sample_order = ~needs_sample_order || ...
+            (isfield(cached_model_collection, 'training_sample_order') && ...
+            isequaln(cached_model_collection.training_sample_order, ...
+            gp.training_sample_order));
+        needs_trajectory_stats = isfield(gp, ...
+            'training_trajectory_idx_per_sample');
+        cache_has_trajectory_stats = isfield(cached_model_collection, ...
+            'training_trajectory_utilization');
+        if cache_matches_dims && cache_matches_training_cfg && cache_matches_sample_order && ...
+                (~needs_trajectory_stats || cache_has_trajectory_stats)
+            model_collection = cached_model_collection;
+            model_collection.cache_label = cache_label;
+            disp(['Loaded cached ', cache_label, ' LoG-GP model: ', char(cache_path)]);
+            return;
+        end
+        disp(['Ignoring cached ', cache_label, ...
+            ' LoG-GP model because dimensions, training threshold, or statistics changed.']);
     end
 end
 
 model_collection = fit_loggp_model(s_slices, x_slices, y_slices, gp);
 model_collection.cache_label = cache_label;
 if cache_enabled
-    save(cache_path, 'model_collection');
-    disp(['Saved cached ', cache_label, ' LoG-GP model: ', char(cache_path)]);
+    save_model_cache(cache_path, cache_label, model_collection);
 end
 end

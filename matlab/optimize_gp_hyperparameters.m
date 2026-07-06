@@ -2,6 +2,7 @@
 function gp = optimize_gp_hyperparameters(x_slices, y_slices, gp, s_slices)
 x_dim = size(x_slices, 3);
 y_dim = size(y_slices, 3);
+input_dim = x_dim + 1;
 
 %% Load Saved Hyperparameters
 hyperparameter_mat_path = string(gp.hyperparameter_mat_path);
@@ -9,10 +10,16 @@ if strlength(hyperparameter_mat_path) > 0 && isfile(hyperparameter_mat_path)
     fprintf('Loading saved hyperparameters: %s\n', hyperparameter_mat_path);
     saved_params = load(hyperparameter_mat_path, ...
         'SigmaF', 'SigmaL', 'SigmaN');
-    gp.length_scale_mat = saved_params.SigmaL;
-    gp.signal_std_vec = saved_params.SigmaF(:)';
-    gp.noise_std_vec = saved_params.SigmaN(:)';
-    return;
+    cache_matches_dims = isequal(size(saved_params.SigmaL), ...
+        [input_dim, y_dim]) && numel(saved_params.SigmaF) == y_dim && ...
+        numel(saved_params.SigmaN) == y_dim;
+    if cache_matches_dims
+        gp.length_scale_mat = saved_params.SigmaL;
+        gp.signal_std_vec = saved_params.SigmaF(:)';
+        gp.noise_std_vec = saved_params.SigmaN(:)';
+        return;
+    end
+    disp('Ignoring saved hyperparameters because dimensions changed.');
 end
 %% Flatten Flow-Matching Training Pairs
 X = reshape(x_slices, [], x_dim);
@@ -25,7 +32,6 @@ n_pretrain = min(gp.n_pretrain, size(X, 1));
 pretrain_idx = randperm(size(X, 1), n_pretrain);
 
 %% fitrgp Hyperparameter Optimization
-input_dim = size(X, 2);
 sigma_l_set = nan(input_dim, y_dim);
 sigma_f_set = nan(1, y_dim);
 sigma_n_set = nan(1, y_dim);

@@ -27,8 +27,11 @@ for output_idx = 1:y_dim
 end
 added_counts = zeros(y_dim, 1); %记录训练过程中每个维度实际加入多少点
 skipped_counts = zeros(y_dim, 1);
+added_counts_per_sample = zeros(n_samples, 1);
+skipped_counts_per_sample = zeros(n_samples, 1);
 
 for point_idx = 1:size(X, 1) % 遍历所有训练点
+    sample_idx = ceil(point_idx / numel(s_slices));
     for output_idx = 1:y_dim % 遍历所有输出维度
         should_add = true;
         if output_models{output_idx}.DataQuantity > 0
@@ -39,6 +42,8 @@ for point_idx = 1:size(X, 1) % 遍历所有训练点
         end
         if ~should_add
             skipped_counts(output_idx) = skipped_counts(output_idx) + 1;
+            skipped_counts_per_sample(sample_idx) = ...
+                skipped_counts_per_sample(sample_idx) + 1;
             continue;
         end
         % 把训练点加入LoG-GP
@@ -46,8 +51,13 @@ for point_idx = 1:size(X, 1) % 遍历所有训练点
             Y(point_idx, output_idx), false);
         if flag == -3
             warning('LoG-GP data capacity reached for output %d. Remaining data are ignored.', output_idx);
+            skipped_counts(output_idx) = skipped_counts(output_idx) + 1;
+            skipped_counts_per_sample(sample_idx) = ...
+                skipped_counts_per_sample(sample_idx) + 1;
         else
             added_counts(output_idx) = added_counts(output_idx) + 1;
+            added_counts_per_sample(sample_idx) = ...
+                added_counts_per_sample(sample_idx) + 1;
         end
 	end
 	% 每一万个点/处理到最后一个点打印训练进度
@@ -62,4 +72,28 @@ fprintf('  Skipped per output: %s\n', mat2str(skipped_counts'));
 % 把所有训练好的GP封装起来
 model_collection = build_model_collection(output_models, ...
     added_counts, skipped_counts, size(X, 1), y_dim);
+model_collection.training_accuracy_threshold = training_accuracy_threshold;
+model_collection.per_output_training_threshold = per_output_training_threshold;
+model_collection.n_added_per_sample = added_counts_per_sample;
+model_collection.n_skipped_per_sample = skipped_counts_per_sample;
+if isfield(gp, 'training_sample_order')
+    model_collection.training_sample_order = gp.training_sample_order;
+end
+if isfield(gp, 'training_trajectory_idx_per_sample')
+    traj_idx = gp.training_trajectory_idx_per_sample(:);
+    n_trajectories = max(traj_idx);
+    added_per_trajectory = accumarray(traj_idx, ...
+        added_counts_per_sample, [n_trajectories, 1], @sum, 0);
+    skipped_per_trajectory = accumarray(traj_idx, ...
+        skipped_counts_per_sample, [n_trajectories, 1], @sum, 0);
+    model_collection.n_added_per_trajectory = added_per_trajectory;
+    model_collection.n_skipped_per_trajectory = skipped_per_trajectory;
+    model_collection.training_trajectory_utilization = ...
+        added_per_trajectory ./ max(added_per_trajectory + ...
+        skipped_per_trajectory, 1);
+    fprintf('  Added per trajectory: %s\n', ...
+        mat2str(added_per_trajectory'));
+    fprintf('  Training trajectory utilization: %s\n', ...
+        mat2str(model_collection.training_trajectory_utilization', 4));
+end
 end

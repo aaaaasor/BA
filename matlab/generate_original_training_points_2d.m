@@ -18,22 +18,22 @@ theta_min_set = nan(1, p_quantity);
 theta_max_set = nan(1, p_quantity);
 
 p_nr = 1;
-r_set(p_nr) = 0.1;
+r_set(p_nr) = 0.05;
 p_0_set(:, p_nr) = [0.1; 0.1];
-theta_min_set(p_nr) = deg2rad(-30);
-theta_max_set(p_nr) = deg2rad(30);
+theta_min_set(p_nr) = deg2rad(-15);
+theta_max_set(p_nr) = deg2rad(15);
 
 p_nr = 2;
-r_set(p_nr) = 0.2;
+r_set(p_nr) = 0.1;
 p_0_set(:, p_nr) = [0.5; 0.5];
-theta_min_set(p_nr) = deg2rad(60);
-theta_max_set(p_nr) = deg2rad(120);
+theta_min_set(p_nr) = deg2rad(75);
+theta_max_set(p_nr) = deg2rad(105);
 
 p_nr = 3;
-r_set(p_nr) = 0.1;
+r_set(p_nr) = 0.05;
 p_0_set(:, p_nr) = [0.9; 0.9];
-theta_min_set(p_nr) = deg2rad(-30);
-theta_max_set(p_nr) = deg2rad(30);
+theta_min_set(p_nr) = deg2rad(-15);
+theta_max_set(p_nr) = deg2rad(15);
 
 feature_dim = 4;
 points = nan(n_points, n_trajectories, feature_dim);

@@ -155,6 +155,44 @@ if isfield(cfg, 'reference_points') && ~isempty(cfg.reference_points)
         end
     end
 end
+if isfield(cfg, 'anchor_points') && ~isempty(cfg.anchor_points)
+    anchor_points = cfg.anchor_points;
+    n_anchor_curves = min(size(anchor_points, 2), max_curves);
+    for idx = 1:n_anchor_curves
+        anchor_curve = squeeze(anchor_points(:, idx, :));
+        anchor_curve = anchor_curve(:, 1:2);
+        if idx == 1
+            plot(anchor_curve(:, 1), anchor_curve(:, 2), 'kd', ...
+                'MarkerFaceColor', 'none', 'MarkerSize', 7, ...
+                'LineWidth', 1.2, 'LineStyle', 'none', ...
+                'DisplayName', 'First-level anchor points');
+        else
+            plot(anchor_curve(:, 1), anchor_curve(:, 2), 'kd', ...
+                'MarkerFaceColor', 'none', 'MarkerSize', 6, ...
+                'LineWidth', 1.0, 'LineStyle', 'none', ...
+                'HandleVisibility', 'off');
+        end
+    end
+end
+if isfield(cfg, 'anchor_target_points') && ~isempty(cfg.anchor_target_points)
+    anchor_target_points = cfg.anchor_target_points;
+    n_anchor_target_curves = min(size(anchor_target_points, 2), max_curves);
+    for idx = 1:n_anchor_target_curves
+        anchor_target_curve = squeeze(anchor_target_points(:, idx, :));
+        anchor_target_curve = anchor_target_curve(:, 1:2);
+        if idx == 1
+            plot(anchor_target_curve(:, 1), anchor_target_curve(:, 2), 'ks', ...
+                'MarkerFaceColor', 'none', 'MarkerSize', 7, ...
+                'LineWidth', 1.2, 'LineStyle', 'none', ...
+                'DisplayName', 'First-level rollout anchors');
+        else
+            plot(anchor_target_curve(:, 1), anchor_target_curve(:, 2), 'ks', ...
+                'MarkerFaceColor', 'none', 'MarkerSize', 6, ...
+                'LineWidth', 1.0, 'LineStyle', 'none', ...
+                'HandleVisibility', 'off');
+        end
+    end
+end
 grid on;
 axis equal;
 xlim(x_limits);
@@ -174,10 +212,6 @@ lgd.FontSize = 8;
 lgd.ItemTokenSize = [14, 8];
 
 if cfg.output.enabled
-    local_export_graphics(fig, output_path);
+    export_graphics_compat(fig, output_path);
 end
-end
-
-function local_export_graphics(target, output_path)
-export_graphics_compat(target, output_path);
 end

@@ -20,6 +20,7 @@ if isempty(constraint_cfg)
 end
 % 有约束：算 GP 统计量，用传入的速度覆盖均值，再做修正
 stats = predict_gp_stats(model, gp_input);
+stats.x = x;
 if ~isempty(gp_velocity)
     stats.mu = gp_velocity;
 end

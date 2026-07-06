@@ -6,4 +6,5 @@ model_collection.n_training_pairs = n_training_pairs;
 model_collection.n_added_per_output = added_counts;
 model_collection.n_skipped_per_output = skipped_counts;
 model_collection.y_dim = y_dim;
+model_collection.input_dim = output_models{1}.x_dim;
 end

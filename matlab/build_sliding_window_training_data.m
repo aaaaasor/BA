@@ -18,16 +18,20 @@ target_data = zeros(n_rows, n_samples);
 
 %% Sliding Window Targets
 sample_idx = 1;
-for window_start = window_start_idx % 外层循环：遍历每一个窗口的起始点
-    for traj_idx = 1:n_trajectories % 内层循环：遍历每一条独立的轨迹
+trajectory_idx_per_sample = zeros(n_samples, 1);
+window_idx_per_sample = zeros(n_samples, 1);
+for window_idx = 1:n_windows
+    window_start = window_start_idx(window_idx);
+    for traj_idx = 1:n_trajectories
         window_points = dense_points(window_start:(window_start + ...
             n_points_per_window - 1), traj_idx, :);
         window_curve = squeeze(window_points);
         target_data(:, sample_idx) = reshape(window_curve', [], 1);
+        trajectory_idx_per_sample(sample_idx) = traj_idx;
+        window_idx_per_sample(sample_idx) = window_idx;
         sample_idx = sample_idx + 1;
     end
 end
-
 %% Standardize Window Target Distribution
 target_mean = mean(target_data, 2);
 target_std = std(target_data, 0, 2);
@@ -38,6 +42,12 @@ source_data = randn(size(target_data));
 data_transform.mean = target_mean;
 data_transform.std = target_std;
 data_transform.feature_dim = feature_dim;
+data_transform.window_start_idx = window_start_idx;
+data_transform.n_windows = n_windows;
+data_transform.n_trajectories = n_trajectories;
+data_transform.sample_order = 'window_major';
+data_transform.trajectory_idx_per_sample = trajectory_idx_per_sample;
+data_transform.window_idx_per_sample = window_idx_per_sample;
 
 target_vectors = target_data_model';
 source_vectors = source_data';

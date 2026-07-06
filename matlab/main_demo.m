@@ -12,8 +12,21 @@ this_file = mfilename('fullpath');
 this_dir = fileparts(this_file);
 first_level_target_points = generate_original_training_points_2d( ...
     5, cfg.n_train);
+if isfield(cfg, 'first_level_use_tangent_features') && ...
+        ~cfg.first_level_use_tangent_features
+    first_level_target_points = first_level_target_points(:, :, 1:2);
+    cfg.cache.first_level_model_path = fullfile('outputs', ...
+        'LoG_GP_FirstLevel_PositionOnly_Model.mat');
+    cfg.cache.first_level_rollout_path = fullfile('outputs', ...
+        'LoG_GP_FirstLevel_PositionOnly_Rollout_WithHOCBF_PTCBF.mat');
+    cfg.cache.first_level_hyperparameter_path = fullfile('outputs', ...
+        'LoG_GP_FirstLevel_PositionOnly_Hyperparameter.mat');
+    first_level_feature_mode = 'position only [x, y]';
+else
+    first_level_feature_mode = '[x, y, dx/ds, dy/ds] tangent';
+end
 disp(['First-level target source: generated 5-point trajectories with ', ...
-    '[dx/ds, dy/ds] tangent features']);
+    first_level_feature_mode, ' features']);
 rng(cfg.first_level_data_seed);
 [s_slices, x_slices, y_slices, target_points, source_points, ...
     target_data, source_data, trajectory_t_slices, data_transform] = build_training_data( ...
@@ -29,6 +42,7 @@ cfg.gp = optimize_gp_hyperparameters(x_slices, y_slices, cfg.gp, s_slices);
 
 %% Fit LoG-GP Flow Model
 cfg.gp.training_accuracy_threshold = cfg.gp.first_level_training_accuracy_threshold;
+cfg.gp.training_trajectory_idx_per_sample = (1:size(x_slices, 2))';
 disp('Fitting first-level LoG-GP flow model...');
 rng(cfg.first_level_fit_seed);
 first_model_cache_path = fullfile(this_dir, cfg.cache.first_level_model_path);
@@ -37,6 +51,7 @@ model_collection = fit_or_load_loggp_model(s_slices, x_slices, y_slices, ...
     cfg.gp, first_model_cache_path, 'first-level');
 disp(['First-level LoG-GP fit/load elapsed: ', ...
     num2str(toc(first_fit_timer), '%.1f'), ' seconds']);
+plot_training_trajectory_utilization(cfg, model_collection, 'first-level');
 
 %% RK4 Rollout
 disp('Running first-level RK4 rollout...');
@@ -48,14 +63,30 @@ n_eval = size(x_init, 1);
 first_rollout_cache_path = fullfile(this_dir, cfg.cache.first_level_rollout_path);
 first_rollout_cache_dir = fileparts(first_rollout_cache_path);
 if ~exist(first_rollout_cache_dir, 'dir'); mkdir(first_rollout_cache_dir); end
+first_rollout_constraint = make_level_variance_constraint(cfg, 'first_level');
 use_first_rollout_cache = false;
 if isfile(first_rollout_cache_path)
     cached = load(first_rollout_cache_path);
     if size(cached.traj_path_10d, 2) == n_eval
-        rollout_times = cached.rollout_times;
-        traj_path_10d = cached.traj_path_10d;
-        use_first_rollout_cache = true;
-        disp(['Loaded cached first-level rollout: ', first_rollout_cache_path]);
+        cache_has_diagnostics = isfield(cached, 'first_rollout_diagnostics') && ...
+            isfield(cached.first_rollout_diagnostics, 'hocbf');
+        cache_matches_constraint = isfield(cached, ...
+            'saved_first_rollout_constraint') && ...
+            isequaln(cached.saved_first_rollout_constraint, ...
+            first_rollout_constraint);
+        if cache_has_diagnostics && cache_matches_constraint
+            rollout_times = cached.rollout_times;
+            traj_path_10d = cached.traj_path_10d;
+            first_rollout_diagnostics = cached.first_rollout_diagnostics;
+            use_first_rollout_cache = true;
+            disp(['Loaded cached first-level rollout: ', first_rollout_cache_path]);
+        elseif ~cache_matches_constraint
+            disp(['Ignoring first-level rollout cache because rollout ', ...
+                'constraint config changed.']);
+        else
+            disp(['Ignoring first-level rollout cache without HOCBF/PTCBF ', ...
+                'diagnostics.']);
+        end
     else
         disp(['Ignoring first-level rollout cache with sample count ', ...
             num2str(size(cached.traj_path_10d, 2)), ...
@@ -64,15 +95,19 @@ if isfile(first_rollout_cache_path)
 end
 if ~use_first_rollout_cache
     first_rollout_timer = tic;
-    [rollout_times, traj_path_10d] = rk4_rollout(model_collection, ...
+    [rollout_times, traj_path_10d, first_rollout_diagnostics] = rk4_rollout(model_collection, ...
         x_init, cfg.t_min, cfg.rollout_t_max, cfg.first_level_time_steps, ...
-        []);
+        first_rollout_constraint);
     disp(['First-level RK4 rollout elapsed: ', ...
         num2str(toc(first_rollout_timer), '%.1f'), ' seconds']);
+    saved_first_rollout_constraint = first_rollout_constraint;
     try
-        save(first_rollout_cache_path, 'rollout_times', 'traj_path_10d');
+        save(first_rollout_cache_path, 'rollout_times', 'traj_path_10d', ...
+            'first_rollout_diagnostics', 'saved_first_rollout_constraint');
     catch
-        save(first_rollout_cache_path, 'rollout_times', 'traj_path_10d', '-v7.3');
+        save(first_rollout_cache_path, 'rollout_times', 'traj_path_10d', ...
+            'first_rollout_diagnostics', 'saved_first_rollout_constraint', ...
+            '-v7.3');
     end
     disp(['Saved cached first-level rollout: ', first_rollout_cache_path]);
 end
@@ -122,6 +157,17 @@ if all(isfinite(first_level_tangent_angle_error))
     disp(['First-level anchor tangent angle error max deg: ', ...
         num2str(max(first_level_tangent_angle_error))]);
 end
+if isfield(cfg, 'stop_after_first_level') && cfg.stop_after_first_level
+    disp('Stopping after first level because cfg.stop_after_first_level is true.');
+    first_stop_plot_cfg = cfg;
+    first_stop_plot_cfg.reference_points = first_level_reference_points;
+    first_stop_plot_cfg.reference_label = 'Training reference curve';
+    first_stop_plot_cfg.sample_curve_label = 'Stage 1 sample curves';
+    plot_results(first_stop_plot_cfg, target_points, source_points, ...
+        reconstructed_points);
+    plot_hocbf_psi_trace_diagnostics(cfg, first_rollout_diagnostics);
+    return;
+end
 
 %% Segment-Level Flow Model
 disp('Building second-level segment flow-matching data...');
@@ -133,8 +179,8 @@ n_second_level_training_points = (size(target_points, 1) - 1) * ...
 target_points_dense = generate_original_training_points_2d( ...
     n_second_level_training_points, size(target_points, 2));
 anchor_reconstruction_error = max(abs( ...
-    target_points_dense(first_level_anchor_idx, :, :) - target_points), ...
-    [], 'all');
+    target_points_dense(first_level_anchor_idx, :, 1:first_level_feature_dim) - ...
+    target_points), [], 'all');
 disp(['Generated dense target anchor reconstruction error: ', ...
     num2str(anchor_reconstruction_error)]);
 rng(cfg.second_level_data_seed);
@@ -145,6 +191,9 @@ rng(cfg.second_level_data_seed);
 segment_gp = cfg.gp;
 segment_gp.training_accuracy_threshold = ...
     cfg.gp.second_level_training_accuracy_threshold;
+segment_gp.training_trajectory_idx_per_sample = ...
+    segment_data_transform.trajectory_idx_per_sample;
+segment_gp.training_sample_order = segment_data_transform.sample_order;
 segment_gp.hyperparameter_mat_path = cfg.cache.second_level_hyperparameter_path;
 segment_gp.n_pretrain = min(cfg.gp.second_level_n_pretrain, size(segment_x_slices, 1) * size(segment_x_slices, 2));
 if isfield(cfg.gp, 'second_level_length_scale_time_varying')
@@ -173,7 +222,7 @@ segment_model_collection = fit_or_load_loggp_model(segment_s_slices, ...
 disp(['Second-level LoG-GP fit/load elapsed: ', ...
     num2str(toc(second_fit_timer), '%.1f'), ' seconds']);
 
-second_level_anchor_points = first_level_reference_points;
+second_level_anchor_points = reconstructed_points;
 
 n_generation_segments = size(second_level_anchor_points, 1) - 1;
 n_second_level_samples = cfg.second_level_generation_samples;
@@ -183,49 +232,17 @@ segment_feature_dim = size(second_level_anchor_points, 3);
 n_segment_rows = segment_feature_dim * cfg.segment_points_per_segment;
 rng(cfg.second_level_rollout_seed);
 segment_x_init = randn(n_segment_eval, n_segment_rows);
-segment_variance_constraint = cfg.variance_constraint;
-if isfield(cfg.variance_constraint, 'second_level_integral_uncertainty_budget')
-    segment_variance_constraint.integral_uncertainty_budget = ...
-        cfg.variance_constraint.second_level_integral_uncertainty_budget;
-end
-if isfield(cfg.variance_constraint, 'second_level_hocbf_alpha2')
-    segment_variance_constraint.hocbf_alpha2 = ...
-        cfg.variance_constraint.second_level_hocbf_alpha2;
-end
-segment_variance_constraint.grad_tol = cfg.variance_constraint.grad_tol;
-if isfield(cfg.variance_constraint, 'second_level_hocbf_relaxation_bound')
-    segment_variance_constraint.hocbf_relaxation_bound = ...
-        cfg.variance_constraint.second_level_hocbf_relaxation_bound;
-end
-if isfield(cfg.variance_constraint, 'second_level_psi1_margin')
-    segment_variance_constraint.psi1_margin = ...
-        cfg.variance_constraint.second_level_psi1_margin;
-end
-if isfield(cfg.variance_constraint, 'second_level_diagnostics')
-    segment_variance_constraint.diagnostics = ...
-        cfg.variance_constraint.second_level_diagnostics;
-end
-if isfield(cfg.variance_constraint, 'second_level_terminal_variance_enabled')
-    segment_variance_constraint.terminal_variance_enabled = ...
-        cfg.variance_constraint.second_level_terminal_variance_enabled;
-end
-if isfield(cfg.variance_constraint, 'second_level_terminal_variance_beta_final')
-    segment_variance_constraint.terminal_variance_beta_final = ...
-        cfg.variance_constraint.second_level_terminal_variance_beta_final;
-end
-if isfield(cfg.variance_constraint, 'second_level_terminal_variance_ptzf_initial_margin')
-    segment_variance_constraint.terminal_variance_ptzf_initial_margin = ...
-        cfg.variance_constraint.second_level_terminal_variance_ptzf_initial_margin;
-end
-if isfield(cfg.variance_constraint, 'second_level_terminal_variance_ptzf_gamma')
-    segment_variance_constraint.terminal_variance_ptzf_gamma = ...
-        cfg.variance_constraint.second_level_terminal_variance_ptzf_gamma;
-end
-if isfield(cfg.variance_constraint, 'second_level_terminal_variance_alpha')
-    segment_variance_constraint.terminal_variance_alpha = ...
-        cfg.variance_constraint.second_level_terminal_variance_alpha;
-end
+segment_variance_constraint = make_level_variance_constraint(cfg, ...
+    'second_level');
 segment_rollout_constraint = segment_variance_constraint;
+if segment_rollout_constraint.ptclf_enabled
+    [anchor_clf_targets, anchor_clf_indices] = ...
+        build_anchor_clf_targets(second_level_anchor_points, n_eval, ...
+        n_second_level_samples, n_generation_segments, ...
+        cfg.segment_points_per_segment, segment_data_transform);
+    segment_rollout_constraint.anchor_clf_targets = anchor_clf_targets;
+    segment_rollout_constraint.anchor_clf_indices = anchor_clf_indices;
+end
 segment_rollout_cache_path = fullfile(this_dir, cfg.cache.second_level_rollout_path);
 segment_rollout_cache_dir = fileparts(segment_rollout_cache_path);
 if ~exist(segment_rollout_cache_dir, 'dir'); mkdir(segment_rollout_cache_dir); end
@@ -246,7 +263,7 @@ if isfile(segment_rollout_cache_path)
             'trace_terminal_ptzf_initial_bound') && ...
             any(isfinite(cached.rollout_diagnostics.hocbf.trace_terminal_inequality_h));
         needs_terminal_diagnostics = struct_field_default( ...
-            segment_rollout_constraint, 'terminal_variance_enabled', false);
+            segment_rollout_constraint, 'ptcbf_enabled', false);
         cache_matches_constraint = isfield(cached, ...
             'saved_segment_rollout_constraint') && ...
             isequaln(cached.saved_segment_rollout_constraint, ...
@@ -442,10 +459,8 @@ if isfield(cfg, 'enable_third_level') && cfg.enable_third_level
         third_segment_variance_constraint.diagnostics = ...
             cfg.variance_constraint.third_level_diagnostics;
     end
-    if isfield(cfg.variance_constraint, 'third_level_terminal_variance_enabled')
-        third_segment_variance_constraint.terminal_variance_enabled = ...
-            cfg.variance_constraint.third_level_terminal_variance_enabled;
-    end
+    third_segment_variance_constraint.ptcbf_enabled = ...
+        cfg.variance_constraint.third_level_ptcbf_enabled;
     if isfield(cfg.variance_constraint, 'third_level_terminal_variance_beta_final')
         third_segment_variance_constraint.terminal_variance_beta_final = ...
             cfg.variance_constraint.third_level_terminal_variance_beta_final;
@@ -471,7 +486,7 @@ if isfield(cfg, 'enable_third_level') && cfg.enable_third_level
         if size(cached.third_traj_path_10d, 2) == n_third_segment_eval
             needs_third_terminal_diagnostics = struct_field_default( ...
                 third_segment_variance_constraint, ...
-                'terminal_variance_enabled', false);
+                'ptcbf_enabled', false);
             cache_has_third_diagnostics = isfield(cached, ...
                 'third_rollout_diagnostics') && ...
                 isfield(cached.third_rollout_diagnostics, 'hocbf') && ...
@@ -666,6 +681,49 @@ final_segment_endpoints = squeeze(segment_traj_path_plot(end, :, :));
 if n_segment_eval == 1
     final_segment_endpoints = reshape(final_segment_endpoints, 1, []);
 end
+% Raw (unstitched) per-segment anchor estimates: each segment keeps its own
+% first and last point, so shared boundaries show both segments'
+% independent CLF estimates instead of silently dropping one of them.
+raw_segment_anchor_points = zeros(2 * n_generation_segments, ...
+    n_second_level_eval, segment_feature_dim);
+for traj_idx = 1:n_second_level_eval
+    for segment_idx = 1:n_generation_segments
+        sample_idx = (traj_idx - 1) * n_generation_segments + segment_idx;
+        segment_curve = reshape(final_segment_endpoints(sample_idx, :), ...
+            segment_feature_dim, [])';
+        raw_segment_anchor_points(2 * segment_idx - 1, traj_idx, :) = ...
+            segment_curve(1, :);
+        raw_segment_anchor_points(2 * segment_idx, traj_idx, :) = ...
+            segment_curve(end, :);
+    end
+end
+% 每个内部锚点(相邻segment共享的边界),两段各自独立算出来的位置/切向
+% 估计值之间的欧氏距离——这才是真正的"贴合差距"，不是QP的slack值。
+n_internal_anchors = n_generation_segments - 1;
+if n_internal_anchors > 0
+    internal_gap_position = zeros(n_internal_anchors, n_second_level_eval);
+    internal_gap_full = zeros(n_internal_anchors, n_second_level_eval);
+    for traj_idx = 1:n_second_level_eval
+        for boundary_idx = 1:n_internal_anchors
+            left_point = squeeze(raw_segment_anchor_points( ...
+                2 * boundary_idx, traj_idx, :));
+            right_point = squeeze(raw_segment_anchor_points( ...
+                2 * boundary_idx + 1, traj_idx, :));
+            internal_gap_full(boundary_idx, traj_idx) = ...
+                norm(left_point - right_point);
+            internal_gap_position(boundary_idx, traj_idx) = ...
+                norm(left_point(1:2) - right_point(1:2));
+        end
+    end
+    disp(['Second-level internal anchor gap (position, x-y) mean/max: ', ...
+        num2str(mean(internal_gap_position(:))), ' / ', ...
+        num2str(max(internal_gap_position(:)))]);
+    disp(['Second-level internal anchor gap (full feature vector) mean/max: ', ...
+        num2str(mean(internal_gap_full(:))), ' / ', ...
+        num2str(max(internal_gap_full(:)))]);
+end
+plot_cfg.anchor_points = raw_segment_anchor_points;
+plot_cfg.anchor_target_points = second_level_anchor_points;
 plot_cfg.segment_plot_data = final_segment_endpoints;
 plot_cfg.segment_plot_count = n_generation_segments;
 plot_cfg.segment_plot_points_per_segment = cfg.segment_points_per_segment;
@@ -725,9 +783,21 @@ if cfg.animation.enabled && n_eval > 0
     if size(source_segment_rows, 1) == 1
         source_segment_rows = reshape(source_segment_rows, 1, []);
     end
-    animation_source_points = stitch_segment_points(source_segment_rows, ...
-        1, animation_segment_count, cfg.segment_points_per_segment);
-    animation_source_points = squeeze(animation_source_points(:, 1, :));
+    % 每段的 source 起点是独立采样的随机点，和上一段终点并不重合，
+    % 所以这里不用 stitch_segment_points（会丢弃每段自己的起点），
+    % 而是把所有段的点原样拼接，保留每段真实的首尾点。
+    source_feature_dim = size(source_segment_rows, 2) / ...
+        cfg.segment_points_per_segment;
+    animation_source_points = zeros( ...
+        animation_segment_count * cfg.segment_points_per_segment, ...
+        source_feature_dim);
+    for segment_idx = 1:animation_segment_count
+        segment_curve = reshape(source_segment_rows(segment_idx, :), ...
+            source_feature_dim, [])';
+        row_start = (segment_idx - 1) * cfg.segment_points_per_segment + 1;
+        row_end = row_start + cfg.segment_points_per_segment - 1;
+        animation_source_points(row_start:row_end, :) = segment_curve;
+    end
     animation_cfg = cfg;
     animation_cfg.animation.segment_plot_path = ...
         animation_traj_path(:, segment_animation_idx, :);
@@ -745,7 +815,7 @@ end
 %% Console Summary
 disp(['Training trajectories loaded: ', num2str(size(target_data, 2))]);
 disp(['Trajectory points per sample: ', num2str(numel(trajectory_t_slices))]);
-disp('Slope feature mode: [dx/ds, dy/ds] tangent');
+disp(['First-level feature mode: ', first_level_feature_mode]);
 disp(['Features per trajectory point: ', num2str(size(target_points, 3))]);
 disp(['ODE s slices: ', num2str(numel(s_slices))]);
 disp(['Rollout time interval: [', num2str(cfg.t_min), ', ', ...

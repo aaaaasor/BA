@@ -10,6 +10,11 @@ state_dim = size(x_init, 2);
 path = zeros(n_steps + 1, n_samples, state_dim); % path(time_idx, sample_idx, state_idx)
 path(1, :, :) = x_init; % 保存初始状态
 constrained = ~isempty(constraint_cfg);
+if constrained
+	% rollout 实际只能跑到 t1(<1，PTZF公式在t=1处有奇点），把这个映射
+	% 偏移量传给 terminal/CLF，让它们在 t=t1 时把 t_eff 当作精确的 1。
+	constraint_cfg.ptzf_time_shift = max(1.0 - t1, 0.0);
+end
 diagnostics.hocbf = init_hocbf_diagnostics();
 diagnostics.max_cumulative_variance = 0.0;
 diagnostics.rollout_elapsed_seconds = 0.0; % 初始化 roll-out 时间统计
@@ -26,7 +31,7 @@ if constrained
 			1:numel(model_collection.model.output_models)));
 	end
 	if struct_field_default(constraint_cfg, ...
-			'terminal_variance_enabled', false)
+			'ptcbf_enabled', false)
 		beta_final = constraint_cfg.terminal_variance_beta_final;
 		terminal_margin = struct_field_default(constraint_cfg, ...
 			'terminal_variance_ptzf_initial_margin', 1e-6);
@@ -41,13 +46,30 @@ end
 for sample_idx = 1:n_samples
 	cumulative_variance_now = 0.0; % 这条 sample 到当前时间为止累计的总方差积分
 	if constrained
+		if struct_field_default(constraint_cfg, 'ptclf_enabled', false) && ...
+				isfield(constraint_cfg, 'anchor_clf_targets')
+			constraint_cfg.anchor_clf_target = ...
+				constraint_cfg.anchor_clf_targets(sample_idx, :)';
+			clf_margin = struct_field_default(constraint_cfg, ...
+				'anchor_clf_ptzf_initial_margin', 1e-6);
+			anchor_indices = constraint_cfg.anchor_clf_indices(:)';
+			anchor_target = constraint_cfg.anchor_clf_target(:);
+			anchor_error0 = x_init(sample_idx, anchor_indices)' - anchor_target;
+			clf_g0 = sum(anchor_error0 .^ 2);
+			constraint_cfg.anchor_clf_ptzf_initial_bound = ...
+				max(clf_g0, 0.0) + clf_margin;
+			clf_g0 = constraint_cfg.anchor_clf_ptzf_initial_bound - clf_margin;
+			fprintf(['  sample %d: anchor CLF g0=%.6g, margin=%.3g, ', ...
+				'gbar0=%.6g\n'], sample_idx, clf_g0, clf_margin, ...
+				constraint_cfg.anchor_clf_ptzf_initial_bound);
+		end
 		% 根据初始方差动态计算 alpha1，保证 psi_1(0) >= psi1_margin
 		beta0 = beta0_values(sample_idx); % 计算初始时刻的 GP 总预测方差
 		h0 = constraint_cfg.hocbf_relaxation_bound;
 		B = constraint_cfg.integral_uncertainty_budget;
 		alpha1_computed = (beta0 - B) / h0 + constraint_cfg.psi1_margin / h0;
 		if struct_field_default(constraint_cfg, ...
-				'terminal_variance_enabled', false)
+				'ptcbf_enabled', false)
 			terminal_margin = struct_field_default(constraint_cfg, ...
 				'terminal_variance_ptzf_initial_margin', 1e-6);
 			terminal_h0 = terminal_h0_global;

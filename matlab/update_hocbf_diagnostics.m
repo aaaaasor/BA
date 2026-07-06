@@ -16,6 +16,7 @@ hocbf_diag.trace_sample_idx(end + 1, 1) = sample_idx;
 hocbf_diag.trace_step_idx(end + 1, 1) = step_idx;
 hocbf_diag.trace_stage_idx(end + 1, 1) = stage_idx;
 hocbf_diag.trace_t(end + 1, 1) = info.t;
+hocbf_diag.trace_hocbf_enabled(end + 1, 1) = info.hocbf_enabled;
 hocbf_diag.trace_psi0(end + 1, 1) = info.psi0;
 hocbf_diag.trace_psi1(end + 1, 1) = info.psi1;
 hocbf_diag.trace_psi2(end + 1, 1) = info.psi2;
@@ -32,6 +33,9 @@ hocbf_diag.trace_rho_components(end + 1, :) = [ ...
 hocbf_diag.trace_integral_bound(end + 1, 1) = info.integral_bound;
 hocbf_diag.trace_hocbf_constraint_residual(end + 1, 1) = ...
 	info.hocbf_constraint_residual;
+hocbf_diag.trace_hocbf_relaxed_constraint_residual(end + 1, 1) = ...
+	info.hocbf_relaxed_constraint_residual;
+hocbf_diag.trace_hocbf_slack(end + 1, 1) = info.hocbf_slack;
 u_now = reshape(info.u, 1, []);
 hocbf_diag.trace_u(end + 1, 1:numel(u_now)) = u_now;
 hocbf_diag.trace_correction_norm(end + 1, 1) = info.correction_norm;
@@ -44,6 +48,7 @@ hocbf_diag.trace_cumulative_variance(end + 1, 1) = info.cumulative_variance;
 hocbf_diag.trace_time_average_variance(end + 1, 1) = info.time_average_variance;
 hocbf_diag.trace_terminal_ptzf_initial_bound(end + 1, 1) = ...
 	info.terminal_ptzf_initial_bound;
+hocbf_diag.trace_ptcbf_enabled(end + 1, 1) = info.ptcbf_enabled;
 hocbf_diag.trace_terminal_ptzf_bound(end + 1, 1) = info.terminal_ptzf_bound;
 hocbf_diag.trace_terminal_ptzf_bound_dot(end + 1, 1) = ...
 	info.terminal_ptzf_bound_dot;
@@ -55,6 +60,25 @@ hocbf_diag.trace_terminal_h(end + 1, 1) = info.terminal_h;
 hocbf_diag.trace_terminal_bound(end + 1, 1) = info.terminal_bound;
 hocbf_diag.trace_terminal_constraint_residual(end + 1, 1) = ...
 	info.terminal_constraint_residual;
+hocbf_diag.trace_terminal_relaxed_constraint_residual(end + 1, 1) = ...
+	info.terminal_relaxed_constraint_residual;
+hocbf_diag.trace_terminal_slack(end + 1, 1) = info.terminal_slack;
+hocbf_diag.trace_anchor_clf_v(end + 1, 1) = info.anchor_clf_v;
+hocbf_diag.trace_anchor_clf_bound(end + 1, 1) = info.anchor_clf_bound;
+hocbf_diag.trace_anchor_clf_residual(end + 1, 1) = ...
+	info.anchor_clf_residual;
+hocbf_diag.trace_anchor_clf_raw_residual(end + 1, 1) = ...
+	info.anchor_clf_raw_residual;
+hocbf_diag.trace_anchor_clf_slack(end + 1, 1) = ...
+	info.anchor_clf_slack;
+hocbf_diag.trace_qp_slack(end + 1, 1) = info.qp_slack;
+hocbf_diag.trace_anchor_clf_ptzf_bound(end + 1, 1) = ...
+	info.anchor_clf_ptzf_bound;
+hocbf_diag.trace_anchor_clf_ptzf_bound_dot(end + 1, 1) = ...
+	info.anchor_clf_ptzf_bound_dot;
+hocbf_diag.trace_anchor_clf_ptzf_cg(end + 1, 1) = ...
+	info.anchor_clf_ptzf_cg;
+hocbf_diag.trace_anchor_clf_cpt(end + 1, 1) = info.anchor_clf_cpt;
 hocbf_diag.trace_qp_exitflag(end + 1, 1) = info.qp_exitflag;
 hocbf_diag.trace_qp_active_constraint_count(end + 1, 1) = ...
 	info.qp_active_constraint_count;
@@ -81,6 +105,9 @@ if isfinite(info.psi1) && info.psi1 < hocbf_diag.min_psi1
 end
 hocbf_diag.min_psi2 = min(hocbf_diag.min_psi2, info.psi2);
 hocbf_diag.max_hocbf_constraint_residual = max(hocbf_diag.max_hocbf_constraint_residual, info.hocbf_constraint_residual);
+hocbf_diag.max_hocbf_relaxed_constraint_residual = max( ...
+	hocbf_diag.max_hocbf_relaxed_constraint_residual, ...
+	info.hocbf_relaxed_constraint_residual);
 if isfinite(info.terminal_h) && info.terminal_h < hocbf_diag.min_terminal_h
 	hocbf_diag.min_terminal_h = info.terminal_h;
 	hocbf_diag.min_terminal_h_sample_idx = sample_idx;
@@ -96,6 +123,9 @@ end
 hocbf_diag.max_terminal_constraint_residual = max( ...
 	hocbf_diag.max_terminal_constraint_residual, ...
 	info.terminal_constraint_residual);
+hocbf_diag.max_terminal_relaxed_constraint_residual = max( ...
+	hocbf_diag.max_terminal_relaxed_constraint_residual, ...
+	info.terminal_relaxed_constraint_residual);
 if isfinite(info.qp_exitflag)
 	hocbf_diag.min_qp_exitflag = min(hocbf_diag.min_qp_exitflag, ...
 		info.qp_exitflag);
