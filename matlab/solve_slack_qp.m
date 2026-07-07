@@ -6,7 +6,7 @@ if ~(exist('quadprog', 'file') == 2 || exist('quadprog', 'builtin') == 5)
 end
 n_u = numel(stats.mu);
 n_constraints = size(A_qp, 1);
-slack_enabled = slack_enabled_for_constraints(constraint_cfg, constraint_types);
+slack_enabled = slack_enabled_for_constraints(constraint_cfg, constraint_types, t);
 slack_rows = find(slack_enabled);
 slack_weights = slack_weights_for_constraints( ...
 	constraint_cfg, constraint_types(slack_rows));
@@ -34,10 +34,11 @@ end
 H = diag([ones(n_u, 1); slack_weights(:)]);
 f = zeros(n_u + numel(slack_rows), 1);
 lb = [-inf(n_u, 1); zeros(numel(slack_rows), 1)];
-% exitflag=0 表示迭代次数用完但未必真的无解，加大 MaxIterations 让
-% 求解器有机会真正收敛，而不是过早地报 infeasible。
+% exitflag=0 表示迭代次数用完但未必真的无解，加大 MaxIterations 并放宽
+% 收敛容差，让求解器有机会真正收敛，而不是过早地报 infeasible。
 options = optimoptions('quadprog', 'Display', 'off', ...
-	'MaxIterations', 2000);
+	'MaxIterations', 2000, 'ConstraintTolerance', 1e-6, ...
+	'OptimalityTolerance', 1e-6, 'StepTolerance', 1e-10);
 [z_col, ~, exitflag] = quadprog(H, f, A_solve, b_qp, [], [], lb, [], [], options);
 if exitflag <= 0 || isempty(z_col)
 	error(['Constrained QP infeasible at t=%.6g: active constraints=%s, beta=%.6g, ', ...
