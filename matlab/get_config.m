@@ -2,7 +2,7 @@
 function cfg = get_config()
 %% Training Data
 cfg.n_train = 30;
-cfg.first_level_generation_samples = 1;
+cfg.first_level_generation_samples = 5;
 cfg.first_level_use_tangent_features = true;
 cfg.n_time_slices = 15;
 cfg.first_level_time_steps = 100;
@@ -118,7 +118,7 @@ cfg.variance_constraint.second_level_anchor_clf_slack_enabled = true;
 cfg.variance_constraint.second_level_anchor_clf_slack_hard_after_time = 0.75;
 cfg.variance_constraint.second_level_hocbf_slack_weight = 1e4;
 cfg.variance_constraint.second_level_terminal_variance_slack_weight = 100;
-cfg.variance_constraint.second_level_anchor_clf_slack_weight = 1.5;
+cfg.variance_constraint.second_level_anchor_clf_slack_weight = 1.0;
 cfg.variance_constraint.third_level_integral_uncertainty_budget = 5.76;
 cfg.variance_constraint.third_level_hocbf_enabled = true;
 cfg.variance_constraint.third_level_hocbf_alpha2 = 5.0;
