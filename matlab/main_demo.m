@@ -55,11 +55,10 @@ plot_training_trajectory_utilization(cfg, model_collection, 'first-level');
 
 %% RK4 Rollout
 disp('Running first-level RK4 rollout...');
-n_available_traj = size(source_data, 2);
+n_rows = size(source_data, 1);
 rng(cfg.first_level_rollout_seed);
-traj_idx = randperm(n_available_traj, min(cfg.first_level_generation_samples, n_available_traj));
-x_init = source_data(:, traj_idx)';
-n_eval = size(x_init, 1);
+n_eval = cfg.first_level_generation_samples;
+x_init = randn(n_eval, n_rows);
 first_rollout_cache_path = fullfile(this_dir, cfg.cache.first_level_rollout_path);
 first_rollout_cache_dir = fileparts(first_rollout_cache_path);
 if ~exist(first_rollout_cache_dir, 'dir'); mkdir(first_rollout_cache_dir); end
@@ -135,33 +134,9 @@ for sample_idx = 1:n_eval
     reconstructed_points(:, sample_idx, :) = reconstructed_curve;
 end
 reconstructed_points = normalize_tangent_features(reconstructed_points);
-first_level_reference_points = target_points(:, traj_idx, :);
-first_level_position_error = reconstructed_points(:, :, 1:2) - ...
-    first_level_reference_points(:, :, 1:2);
-first_level_position_rmse = sqrt(mean(sum(first_level_position_error .^ 2, ...
-    3), 1));
-first_level_tangent_angle_error = nan(1, n_eval);
-if first_level_feature_dim >= 4
-    tangent_dot = sum(reconstructed_points(:, :, 3:4) .* ...
-        first_level_reference_points(:, :, 3:4), 3);
-    tangent_dot = min(max(tangent_dot, -1.0), 1.0);
-    first_level_tangent_angle_error = mean(acosd(tangent_dot), 1);
-end
-disp(['First-level anchor position RMSE mean: ', ...
-    num2str(mean(first_level_position_rmse))]);
-disp(['First-level anchor position RMSE max: ', ...
-    num2str(max(first_level_position_rmse))]);
-if all(isfinite(first_level_tangent_angle_error))
-    disp(['First-level anchor tangent angle error mean deg: ', ...
-        num2str(mean(first_level_tangent_angle_error))]);
-    disp(['First-level anchor tangent angle error max deg: ', ...
-        num2str(max(first_level_tangent_angle_error))]);
-end
 if isfield(cfg, 'stop_after_first_level') && cfg.stop_after_first_level
     disp('Stopping after first level because cfg.stop_after_first_level is true.');
     first_stop_plot_cfg = cfg;
-    first_stop_plot_cfg.reference_points = first_level_reference_points;
-    first_stop_plot_cfg.reference_label = 'Training reference curve';
     first_stop_plot_cfg.sample_curve_label = 'Stage 1 sample curves';
     plot_results(first_stop_plot_cfg, target_points, source_points, ...
         reconstructed_points);
@@ -340,7 +315,6 @@ source_points_plot = stitch_segment_points(initial_segment_data, ...
 source_points_plot = normalize_tangent_features(source_points_plot);
 reconstructed_points_plot = zeros(0, n_second_level_eval, ...
     size(target_points_dense, 3));
-target_reference_points = target_points_dense(:, traj_idx, :);
 uncertainty_times = segment_rollout_times;
 disp('Evaluating second-level LoG-GP predictive uncertainty...');
 uncertainty_values = evaluate_rollout_uncertainty(segment_model_collection, ...
@@ -597,26 +571,6 @@ if isfield(cfg, 'enable_third_level') && cfg.enable_third_level
     third_level_anchor_error = max(abs( ...
         reconstructed_points_fine(third_output_anchor_idx, :, :) - ...
         third_level_anchor_reference_points), [], 'all');
-    third_target_reference_points = zeros(size(target_points_fine, 1), ...
-        n_third_level_eval, size(target_points_fine, 3));
-    for traj_eval_idx = 1:n_eval
-        for second_sample_idx = 1:n_second_level_samples
-            anchor_eval_idx = (traj_eval_idx - 1) * n_second_level_samples + ...
-                second_sample_idx;
-            for third_sample_idx = 1:n_third_samples
-                third_eval_idx = (anchor_eval_idx - 1) * n_third_samples + ...
-                    third_sample_idx;
-                third_target_reference_points(:, third_eval_idx, :) = ...
-                    target_points_fine(:, traj_idx(traj_eval_idx), :);
-            end
-        end
-    end
-    third_target_error = reconstructed_points_fine(:, :, 1:2) - ...
-        third_target_reference_points(:, :, 1:2);
-    third_target_rmse_per_sample = squeeze(sqrt(mean(sum( ...
-        third_target_error .^ 2, 3), 1)));
-    third_target_rmse_mean = mean(third_target_rmse_per_sample);
-    third_target_rmse_max = max(third_target_rmse_per_sample);
     third_level_max_abs_coordinate = max(abs( ...
         reconstructed_points_fine(:, :, 1:2)), [], 'all');
     third_target_max_abs_coordinate = max(abs(target_points_fine(:, :, 1:2)), ...
@@ -631,10 +585,6 @@ if isfield(cfg, 'enable_third_level') && cfg.enable_third_level
         mat2str(size(reconstructed_points_fine))]);
     disp(['Third-level anchor max error: ', ...
         num2str(third_level_anchor_error)]);
-    disp(['Third-level target RMSE mean: ', ...
-        num2str(third_target_rmse_mean)]);
-    disp(['Third-level target RMSE max: ', ...
-        num2str(third_target_rmse_max)]);
     disp(['Third-level max abs coordinate: ', ...
         num2str(third_level_max_abs_coordinate)]);
     disp(['Third-level diverged sample count: ', ...
@@ -657,7 +607,6 @@ if isfield(cfg, 'enable_third_level') && cfg.enable_third_level
     target_points_plot = target_points_fine;
     source_points_plot = third_source_points_raw;
     reconstructed_points_plot = reconstructed_points_fine;
-    target_reference_points = third_target_reference_points;
     reconstructed_points_refined = reconstructed_points_fine;
     final_trajectory_data = reshape(permute(reconstructed_points_fine, ...
         [3, 1, 2]), [], n_third_level_eval)';
@@ -672,11 +621,6 @@ end
 disp('Plotting and exporting results...');
 plot_cfg = cfg;
 plot_cfg.first_level_generation_samples = size(reconstructed_points_plot, 2);
-if exist('target_reference_points', 'var')
-    plot_cfg.reference_points = target_reference_points;
-end
-plot_cfg.reference_label = 'Training reference curve';
-plot_cfg.reference_curve_count = n_eval;
 final_segment_endpoints = squeeze(segment_traj_path_plot(end, :, :));
 if n_segment_eval == 1
     final_segment_endpoints = reshape(final_segment_endpoints, 1, []);
@@ -856,16 +800,6 @@ if exist('third_segment_model_collection', 'var')
 end
 disp(['Total training trajectories: ', num2str(size(x_slices, 2))]);
 disp(['Rolled-out trajectories: ', num2str(n_eval)]);
-disp(['First-level anchor position RMSE mean: ',...
-    num2str(mean(first_level_position_rmse))]);
-disp(['First-level anchor position RMSE max: ', ...
-    num2str(max(first_level_position_rmse))]);
-if all(isfinite(first_level_tangent_angle_error))
-    disp(['First-level anchor tangent angle error mean deg: ', ...
-        num2str(mean(first_level_tangent_angle_error))]);
-    disp(['First-level anchor tangent angle error max deg: ', ...
-        num2str(max(first_level_tangent_angle_error))]);
-end
 if strlength(animation_path) > 0
     disp(['Single-trajectory animation: ', char(animation_path)]);
 end

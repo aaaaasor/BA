@@ -3,12 +3,13 @@ function [targets, indices] = build_anchor_clf_targets( ...
     n_points_per_segment, data_transform)
 % 为第二层 anchor PTCLF 构造目标点。
 % anchor_points 来自第一层 rollout 的 5 个点；第二层每条曲线被拆成
-% n_segments 段，所以每一段只约束该段的起点和终点位置。
+% n_segments 段，所以每一段只约束该段起点和终点的全部特征
+% （位置 x/y + 切向 dx/ds, dy/ds）。
 feature_dim = size(anchor_points, 3);
-position_dim = min(2, feature_dim);
-
 % 第二层状态向量按每段的 5 个点顺序展开。
-% PTCLF 只约束位置，因此取第 1 个点和第 5 个点的 x/y 维度。
+% PTCLF 约束第 1 个点和第 5 个点的全部特征（位置 x/y 以及切向
+% dx/ds, dy/ds），这样相邻段拼接处不仅位置对齐，切线方向也连续。
+position_dim = feature_dim;
 first_point_idx = 1:position_dim;
 last_point_idx = (n_points_per_segment - 1) * feature_dim + ...
     (1:position_dim);
