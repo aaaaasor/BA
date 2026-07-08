@@ -7,7 +7,7 @@ cfg.first_level_use_tangent_features = true;
 cfg.n_time_slices = 15;
 cfg.first_level_time_steps = 100;
 cfg.second_level_time_steps = 100;
-% 导师要求在 [0.99, rollout_t_max] 这段尾部（PTZF 包络急剧收紧的区域）
+% 在 [0.99, rollout_t_max] 这段尾部（PTZF 包络急剧收紧的区域）
 % 额外加密时间步，其余区间仍按 second_level_time_steps 均匀划分。
 cfg.second_level_time_refine_start_t = 0.99;
 cfg.second_level_time_refine_extra_steps = 10;
@@ -111,8 +111,8 @@ cfg.variance_constraint.second_level_terminal_variance_ptzf_gamma = 0.2;
 cfg.variance_constraint.second_level_terminal_variance_alpha = 2.0;
 cfg.variance_constraint.second_level_ptclf_enabled = true;
 cfg.variance_constraint.second_level_anchor_clf_ptzf_enabled = true;
-cfg.variance_constraint.second_level_anchor_clf_ptzf_cg = 0.02;
-cfg.variance_constraint.second_level_anchor_clf_cpt = 50;
+cfg.variance_constraint.second_level_anchor_clf_ptzf_cg = 1.4;
+cfg.variance_constraint.second_level_anchor_clf_cpt = 100;
 cfg.variance_constraint.second_level_anchor_clf_ptzf_initial_margin = 3;
 cfg.variance_constraint.second_level_slack_enabled = true;
 cfg.variance_constraint.second_level_hocbf_slack_enabled = false;
@@ -121,8 +121,8 @@ cfg.variance_constraint.second_level_terminal_variance_slack_enabled = false;
 cfg.variance_constraint.second_level_terminal_variance_slack_late_start_time = 0.65;
 cfg.variance_constraint.second_level_anchor_clf_slack_enabled = true;
 cfg.variance_constraint.second_level_anchor_clf_slack_hard_after_time = 0.65;
-cfg.variance_constraint.second_level_hocbf_slack_weight = 500;
-cfg.variance_constraint.second_level_terminal_variance_slack_weight = 500;
+cfg.variance_constraint.second_level_hocbf_slack_weight = 0.5;
+cfg.variance_constraint.second_level_terminal_variance_slack_weight = 0.5;
 cfg.variance_constraint.second_level_anchor_clf_slack_weight = 1.0;
 cfg.variance_constraint.third_level_integral_uncertainty_budget = 5.76;
 cfg.variance_constraint.third_level_hocbf_enabled = true;

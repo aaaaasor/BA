@@ -503,11 +503,12 @@ classdef LoG_GP_MultiOutput < handle
 			end
 		end
 		%% Prediction of mean, variance, and variance gradient
-		function [mu,var,grad] = predict_variance_grad(obj,x)
+		function [mu,var,grad,n_local_gp] = predict_variance_grad(obj,x)
 			if obj.DataQuantity == 0
 				mu   = zeros(obj.y_dim,1);
 				var  = obj.LocalGP_set{1}.SigmaF ^ 2;
 				grad = zeros(1,obj.x_dim);
+				n_local_gp = 0;
 				return;
 			end
 			% Single tree traversal — no redundant obj.predict call, no set_ErrorBound
@@ -561,6 +562,7 @@ classdef LoG_GP_MultiOutput < handle
 					var  = p_set' * var_set';
 					grad = p_set' * grad_set;
 			end
+			n_local_gp = mCount;
 		end
 	end
 end

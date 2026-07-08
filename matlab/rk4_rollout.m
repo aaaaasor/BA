@@ -32,6 +32,7 @@ end
 diagnostics.hocbf = init_hocbf_diagnostics();
 diagnostics.max_cumulative_variance = 0.0;
 diagnostics.rollout_elapsed_seconds = 0.0; % 初始化 roll-out 时间统计
+loggp_call_stats('reset'); % 清零 LoG-GP 触发次数/local GP 激活数/耗时统计
 
 %% RK4 Integration
 rollout_timer = tic; % 从开始到现在总共多久
@@ -172,4 +173,5 @@ diagnostics.rollout_elapsed_seconds = toc(rollout_timer);
 if constrained && constraint_cfg.diagnostics
 	print_hocbf_diagnostics(diagnostics.hocbf, diagnostics.rollout_elapsed_seconds);
 end
+diagnostics.loggp_call_stats = loggp_call_stats('report');
 end
