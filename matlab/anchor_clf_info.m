@@ -35,9 +35,11 @@ clf_drift = 2.0 * sum(e .* mu(indices));
 % UniConFlow-style PTCLF:
 % g_dot <= gamma(gbar(t) - g) + gbar_dot(t)。
 % 这里取线性 class-K: gamma(r) = cpt * r。
-% gbar(t) = gbar0 * exp(-c_g * t/(1-t)) 是 prescribed-time envelope。
+% gbar(t) = gbar0 * exp(-c_g * t/(1-t)^3) 是 blow-up time transformation
+% 的三次分母版本：分母比原始版本(1-t)收得更快，t=T 处的奇点更"硬"，
+% 临近终点时对瞬时反应速度的要求会比一次方分母版本更极端。
 % 若 anchor_clf_ptzf_enabled = false，退化为 gbar==0 的普通 CLF：
-% g_dot <= -cpt*g，即标准指数收敛条件，不再需要 cg/margin/cr。
+% g_dot <= -cpt*g，即标准指数收敛条件，不再需要 cg/margin。
 ptzf_enabled = struct_field_default(constraint_cfg, ...
 	'anchor_clf_ptzf_enabled', true);
 cpt = struct_field_default(constraint_cfg, 'anchor_clf_cpt', 1.0);
@@ -51,8 +53,9 @@ if ptzf_enabled
 	time_shift = struct_field_default(constraint_cfg, 'ptzf_time_shift', 0.0);
 	t_eff = t + time_shift;
 	remaining_tau = max(1.0 - t_eff, eps);
-	shape = t_eff ./ remaining_tau;
-	shape_dot = remaining_tau .^ (-1.0) + t_eff .* remaining_tau .^ (-2.0);
+	% shape = t_eff / (1-t_eff)^3，分母为三次方的 blow-up 函数。
+	shape = t_eff .* remaining_tau .^ (-3.0);
+	shape_dot = remaining_tau .^ (-3.0) + 3.0 .* t_eff .* remaining_tau .^ (-4.0);
 	ptzf_bound = gbar0 .* exp(-ptzf_cg .* shape);
 	ptzf_bound_dot = -ptzf_cg .* shape_dot .* ptzf_bound;
 else

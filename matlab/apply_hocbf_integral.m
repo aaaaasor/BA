@@ -57,6 +57,8 @@ integral_residual_without_u = rho;
 terminal_residual_without_u = terminal_info.residual_without_u;
 clf_residual_without_u = clf_info.residual_without_u;
 qp_exitflag = nan;
+qp_iterations = nan;
+qp_solve_seconds = 0.0;
 qp_active_constraint_count = 0;
 qp_slack = zeros(0, 1);
 hocbf_slack = 0.0;
@@ -68,7 +70,7 @@ clf_slack = 0.0;
 [A_qp, b_qp, constraint_types] = active_qp_constraints(grad_x, ...
 	integral_bound, terminal_info.bound, clf_info, hocbf_enabled);
 if ~isempty(A_qp)
-	[u_col, qp_exitflag, qp_slack, qp_residuals] = solve_slack_qp(A_qp, b_qp, ...
+	[u_col, qp_exitflag, qp_slack, qp_residuals, qp_iterations, qp_solve_seconds] = solve_slack_qp(A_qp, b_qp, ...
 		constraint_types, ...
 		constraint_cfg, t, stats, terminal_info, integral_residual_without_u, ...
 		terminal_residual_without_u);
@@ -158,6 +160,8 @@ diagnostics.anchor_clf_ptzf_bound_dot = clf_info.ptzf_bound_dot;
 diagnostics.anchor_clf_ptzf_cg = clf_info.ptzf_cg;
 diagnostics.anchor_clf_cpt = clf_info.cpt;
 diagnostics.qp_exitflag = qp_exitflag;
+diagnostics.qp_iterations = qp_iterations;
+diagnostics.qp_solve_seconds = qp_solve_seconds;
 diagnostics.qp_active_constraint_count = qp_active_constraint_count;
 diagnostics.sigma2 = stats.sigma2;
 diagnostics.min_grad_norm_sq = min(grad_norm_sq);

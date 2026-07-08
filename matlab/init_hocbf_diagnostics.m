@@ -13,6 +13,8 @@ hocbf_diag.max_hocbf_relaxed_constraint_residual = -inf;
 hocbf_diag.max_terminal_constraint_residual = -inf;
 hocbf_diag.max_terminal_relaxed_constraint_residual = -inf;
 hocbf_diag.min_qp_exitflag = inf;
+hocbf_diag.max_qp_iterations = 0;
+hocbf_diag.total_qp_solve_seconds = 0.0;
 hocbf_diag.max_qp_active_constraint_count = 0;
 hocbf_diag.trace_sample_idx = [];
 hocbf_diag.trace_step_idx = [];
@@ -65,5 +67,6 @@ hocbf_diag.trace_anchor_clf_ptzf_bound_dot = [];
 hocbf_diag.trace_anchor_clf_ptzf_cg = [];
 hocbf_diag.trace_anchor_clf_cpt = [];
 hocbf_diag.trace_qp_exitflag = [];
+hocbf_diag.trace_qp_iterations = [];
 hocbf_diag.trace_qp_active_constraint_count = [];
 end

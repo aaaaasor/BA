@@ -107,7 +107,7 @@ for frame_nr = 1:numel(frame_idx_set)
             'YData', current_curve(:, 2));
     end
     state_dim = size(current_curve, 1) * size(current_curve, 2);
-    title(ax, sprintf('Single %dD ODE Rollout in %s, s = %.2f', ...
+    title(ax, sprintf('Single %dD ODE Rollout in %s, s = %.3f', ...
         state_dim, struct_field_default(cfg.animation, 'space_label', 'trajectory space'), s_now));
     drawnow;
     frame = getframe(fig);

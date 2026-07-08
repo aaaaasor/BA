@@ -156,7 +156,7 @@ for psi_idx = 1:3
     title([psi_names{psi_idx}, ' trace over RK4 stages'], 'Interpreter', 'latex');
     legend('Location', 'best', 'Interpreter', 'latex');
 end
-sgtitle('HOCBF/PTCBF \psi diagnostics', 'Interpreter', 'tex');
+sgtitle('Integral HOCBF \psi diagnostics', 'Interpreter', 'tex');
 
 fig_integral = figure('Color', 'w', 'WindowStyle', 'normal', ...
     'Units', 'normalized', 'Position', [0.16, 0.16, 0.70, 0.50]);

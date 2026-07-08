@@ -1,10 +1,24 @@
 % Roll out trajectory-space states with a fixed-step classical RK4 integrator.
+% refine_cfg (可选): 结构体，字段 start_t/extra_steps，在 [start_t, t1] 区间内
+% 额外插入 extra_steps 个更细的时间步（用于 PTZF 包络在 t->1 附近急剧收紧的
+% 尾段），其余区间仍按 n_steps 均匀划分。不传则保持原来的均匀网格。
 function [times, path, diagnostics] = rk4_rollout(model_collection, ...
-	x_init, t0, t1, n_steps, constraint_cfg)
+	x_init, t0, t1, n_steps, constraint_cfg, refine_cfg)
 
 %% Allocate Path
-times = linspace(t0, t1, n_steps + 1)'; % 生成rollout所有时间点
-dt = (t1 - t0) / n_steps; % 计算步长
+if nargin >= 7 && ~isempty(refine_cfg) && ...
+		struct_field_default(refine_cfg, 'extra_steps', 0) > 0
+	refine_start_t = refine_cfg.start_t;
+	extra_steps = refine_cfg.extra_steps;
+	coarse_steps = max(round(n_steps * (refine_start_t - t0) / (t1 - t0)), 1);
+	times_coarse = linspace(t0, refine_start_t, coarse_steps + 1)';
+	times_fine = linspace(refine_start_t, t1, extra_steps + 1)';
+	times = [times_coarse; times_fine(2:end)]; % 生成rollout所有时间点（尾段加密）
+else
+	times = linspace(t0, t1, n_steps + 1)'; % 生成rollout所有时间点
+end
+n_steps = numel(times) - 1;
+dt_vec = diff(times); % 每一步的步长（非均匀网格时逐步不同）
 n_samples = size(x_init, 1);
 state_dim = size(x_init, 2);
 path = zeros(n_steps + 1, n_samples, state_dim); % path(time_idx, sample_idx, state_idx)
@@ -84,6 +98,7 @@ for sample_idx = 1:n_samples
 		constraint_cfg.hocbf_alpha1 = alpha1_computed;
 	end
 	for step_idx = 1:n_steps % 对当前 sample 的每个时间步进行积分
+		dt = dt_vec(step_idx); % 当前步的步长（非均匀网格时逐步不同）
 		t_now = times(step_idx); % 当前时间
 		x_now = reshape(path(step_idx, sample_idx, :), [], 1); % 当前状态
 		%% k1
@@ -155,6 +170,6 @@ end
 diagnostics.rollout_elapsed_seconds = toc(rollout_timer);
 % 只有在开启约束，并且配置里要求输出诊断信息时，才打印 HOCBF 的诊断结果
 if constrained && constraint_cfg.diagnostics
-	print_hocbf_diagnostics(diagnostics.hocbf);
+	print_hocbf_diagnostics(diagnostics.hocbf, diagnostics.rollout_elapsed_seconds);
 end
 end

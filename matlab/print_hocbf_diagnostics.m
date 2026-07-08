@@ -1,6 +1,9 @@
-function print_hocbf_diagnostics(hocbf_diag)
+function print_hocbf_diagnostics(hocbf_diag, rollout_elapsed_seconds)
 if isempty(hocbf_diag.trace_t)
 	return;
+end
+if nargin < 2
+	rollout_elapsed_seconds = nan;
 end
 disp(['HOCBF max correction norm: ', ...
 	num2str(hocbf_diag.max_correction_norm)]);
@@ -111,5 +114,22 @@ if isfinite(hocbf_diag.min_terminal_h)
 	disp(['QP min exitflag: ', num2str(hocbf_diag.min_qp_exitflag), ...
 		', max active constraints: ', ...
 		num2str(hocbf_diag.max_qp_active_constraint_count)]);
+	if isfield(hocbf_diag, 'max_qp_iterations')
+		disp(['QP max iterations used (cap 200 unless changed): ', ...
+			num2str(hocbf_diag.max_qp_iterations)]);
+	end
+	if isfield(hocbf_diag, 'total_qp_solve_seconds')
+		if isfinite(rollout_elapsed_seconds) && rollout_elapsed_seconds > 0
+			disp(['QP total solve time: ', ...
+				num2str(hocbf_diag.total_qp_solve_seconds, '%.2f'), ...
+				's / rollout total ', ...
+				num2str(rollout_elapsed_seconds, '%.2f'), 's (', ...
+				num2str(100 * hocbf_diag.total_qp_solve_seconds / ...
+				rollout_elapsed_seconds, '%.1f'), '%)']);
+		else
+			disp(['QP total solve time: ', ...
+				num2str(hocbf_diag.total_qp_solve_seconds, '%.2f'), 's']);
+		end
+	end
 end
 end
