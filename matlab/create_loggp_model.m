@@ -17,4 +17,7 @@ local_gp.set_length_scale_time_schedule(time_varying, ls_start, ls_end);
 
 % 选择 LocalGP 聚合方式
 local_gp.AggregationMethod = gp.aggregation_method;
+
+% local GP 树相邻叶子的重叠区宽度比例，越小一次查询激活的 local GP 越少
+local_gp.o_ratio = struct_field_default(gp, 'o_ratio', 1/10);
 end

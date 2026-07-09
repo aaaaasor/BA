@@ -1,4 +1,4 @@
-% Collect all configuration values for the MATLAB demo.
+% Collect all configuration values for the MATLABcpt demo.
 function cfg = get_config()
 %% Training Data
 cfg.n_train = 30;
@@ -53,7 +53,7 @@ cfg.cache.first_level_hyperparameter_path = fullfile('outputs', 'LoG_GP_FirstLev
 cfg.cache.second_level_hyperparameter_path = fullfile('outputs', 'LoG_GP_SecondLevel_Hyperparameter.mat');
 cfg.cache.third_level_hyperparameter_path = fullfile('outputs', 'LoG_GP_ThirdLevel_Hyperparameter.mat');
 
-%% LoG-GP Parameters
+%% LoG-GP Parameters100
 cfg.gp.first_level_n_pretrain = 450;
 cfg.gp.second_level_n_pretrain = 500;
 cfg.gp.second_level_length_scale_time_varying = true;
@@ -78,6 +78,9 @@ cfg.gp.third_level_length_scale_mat = max( ...
 cfg.gp.max_local_data_quantity = 200;
 cfg.gp.max_local_gp_quantity = ceil(2.0 * cfg.n_train * cfg.n_time_slices / ...
     cfg.gp.max_local_data_quantity);
+% local GP 树相邻叶子之间的重叠区宽度 = (数据范围) * o_ratio。
+% 越大，一次查询越容易同时激活多个 local GP（软分裂）；默认是 1/10。
+cfg.gp.o_ratio = 0;
 cfg.gp.aggregation_method = 'GPOE';
 cfg.gp.first_level_training_accuracy_threshold = 0.8;
 cfg.gp.second_level_training_accuracy_threshold = 2.0;
@@ -100,9 +103,9 @@ cfg.variance_constraint.first_level_hocbf_slack_enabled = false;
 cfg.variance_constraint.first_level_terminal_variance_slack_enabled = false;
 cfg.variance_constraint.second_level_integral_uncertainty_budget = 3;
 cfg.variance_constraint.second_level_hocbf_enabled = true;
-cfg.variance_constraint.second_level_hocbf_alpha2 = 2;
-cfg.variance_constraint.second_level_hocbf_relaxation_bound = 3;
-cfg.variance_constraint.second_level_psi1_margin = 15;
+cfg.variance_constraint.second_level_hocbf_alpha2 = 0.5;
+cfg.variance_constraint.second_level_hocbf_relaxation_bound = 5;
+cfg.variance_constraint.second_level_psi1_margin = 25;
 cfg.variance_constraint.second_level_diagnostics = true;
 cfg.variance_constraint.second_level_ptcbf_enabled = true;
 cfg.variance_constraint.second_level_terminal_variance_beta_final = 5.0;
@@ -111,9 +114,9 @@ cfg.variance_constraint.second_level_terminal_variance_ptzf_gamma = 0.2;
 cfg.variance_constraint.second_level_terminal_variance_alpha = 2.0;
 cfg.variance_constraint.second_level_ptclf_enabled = true;
 cfg.variance_constraint.second_level_anchor_clf_ptzf_enabled = true;
-cfg.variance_constraint.second_level_anchor_clf_ptzf_cg = 1.4;
-cfg.variance_constraint.second_level_anchor_clf_cpt = 100;
-cfg.variance_constraint.second_level_anchor_clf_ptzf_initial_margin = 3;
+cfg.variance_constraint.second_level_anchor_clf_ptzf_cg = 2.0;
+cfg.variance_constraint.second_level_anchor_clf_cpt = 150;
+cfg.variance_constraint.second_level_anchor_clf_ptzf_initial_margin = 4;
 cfg.variance_constraint.second_level_slack_enabled = true;
 cfg.variance_constraint.second_level_hocbf_slack_enabled = false;
 cfg.variance_constraint.second_level_hocbf_slack_late_start_time = 0.65;
@@ -123,7 +126,7 @@ cfg.variance_constraint.second_level_anchor_clf_slack_enabled = true;
 cfg.variance_constraint.second_level_anchor_clf_slack_hard_after_time = 0.65;
 cfg.variance_constraint.second_level_hocbf_slack_weight = 0.5;
 cfg.variance_constraint.second_level_terminal_variance_slack_weight = 0.5;
-cfg.variance_constraint.second_level_anchor_clf_slack_weight = 1.0;
+cfg.variance_constraint.second_level_anchor_clf_slack_weight = 0.5;
 cfg.variance_constraint.third_level_integral_uncertainty_budget = 5.76;
 cfg.variance_constraint.third_level_hocbf_enabled = true;
 cfg.variance_constraint.third_level_hocbf_alpha2 = 5.0;

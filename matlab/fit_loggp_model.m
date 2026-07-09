@@ -74,6 +74,7 @@ model_collection = build_model_collection(output_models, ...
     added_counts, skipped_counts, size(X, 1), y_dim);
 model_collection.training_accuracy_threshold = training_accuracy_threshold;
 model_collection.per_output_training_threshold = per_output_training_threshold;
+model_collection.o_ratio = struct_field_default(gp, 'o_ratio', 1/10);
 model_collection.n_added_per_sample = added_counts_per_sample;
 model_collection.n_skipped_per_sample = skipped_counts_per_sample;
 if isfield(gp, 'training_sample_order')
