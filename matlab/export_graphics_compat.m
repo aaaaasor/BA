@@ -10,21 +10,40 @@ end
 drawnow;
 
 if strcmpi(output_ext, '.emf')
-    if try_exportgraphics_compat(target, output_path, true) || ...
-            try_exportgraphics_compat(target_fig, output_path, true)
-        return;
+    % 先写同目录临时文件，避免 exportgraphics/saveas 直接覆盖 OneDrive
+    % 中已有的 EMF 时失败。临时文件完成后再替换正式文件。
+    temporary_path = [tempname(fileparts(output_path)), '.emf'];
+
+    did_export = try_print_emf_compat(target_fig, temporary_path) || ...
+        try_exportgraphics_compat(target, temporary_path, true) || ...
+        try_exportgraphics_compat(target_fig, temporary_path, true) || ...
+        try_saveas_compat(target_fig, temporary_path, 'emf');
+    if did_export && isfile(temporary_path)
+        [move_ok, move_message] = movefile(temporary_path, output_path, 'f');
+        if move_ok
+            return;
+        end
+
+        % 若正式文件正被外部程序占用，保留一份带时间戳的有效 EMF，
+        % 避免整张图丢失。
+        timestamped_path = fullfile(fileparts(output_path), ...
+            [output_name, '_', datestr(now, 'yyyymmdd_HHMMSS'), '.emf']);
+        try
+            movefile(temporary_path, timestamped_path, 'f');
+            warning('export_graphics_compat:timestampFallback', ...
+                'Target EMF is locked. Wrote EMF instead: %s', ...
+                timestamped_path);
+            return;
+        catch
+            warning('export_graphics_compat:replaceFailed', ...
+                'Rendered EMF could not replace target: %s', move_message);
+        end
     end
 
-    if try_saveas_compat(target_fig, output_path, 'emf')
-        return;
-    end
-
-    fallback_path = fullfile(fileparts(output_path), [output_name, '.png']);
-    if try_exportgraphics_compat(target_fig, fallback_path, false) || ...
-            try_saveas_compat(target_fig, fallback_path, '')
-        warning('export_graphics_compat:emfFallback', ...
-            'EMF export failed for %s. Wrote PNG fallback instead: %s', ...
-            output_path, fallback_path);
+    if try_print_emf_compat(target_fig, output_path) || ...
+            try_exportgraphics_compat(target, output_path, true) || ...
+            try_exportgraphics_compat(target_fig, output_path, true) || ...
+            try_saveas_compat(target_fig, output_path, 'emf')
         return;
     end
 

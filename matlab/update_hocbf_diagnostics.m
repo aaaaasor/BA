@@ -142,4 +142,38 @@ end
 hocbf_diag.max_qp_active_constraint_count = max( ...
 	hocbf_diag.max_qp_active_constraint_count, ...
 	info.qp_active_constraint_count);
+% 行范数追踪(供 slack 权重重新标定)。
+hocbf_diag.trace_grad_norm(end + 1, 1) = info.grad_norm;
+if isfield(info, 'anchor_clf_grad_norm')
+	hocbf_diag.trace_anchor_clf_grad_norm(end + 1, 1) = info.anchor_clf_grad_norm;
+end
+% 障碍 CBF 诊断汇总(fix 5)。info.obstacle_* 由 apply_hocbf_integral 恒设置。
+if isfield(info, 'obstacle_enabled')
+	hocbf_diag.trace_obstacle_h_min(end + 1, 1) = info.obstacle_h_min;
+	hocbf_diag.trace_obstacle_slack(end + 1, 1) = info.obstacle_slack;
+	hocbf_diag.trace_obstacle_n_rows(end + 1, 1) = info.obstacle_n_rows;
+	hocbf_diag.trace_obstacle_max_residual_without_u(end + 1, 1) = ...
+		info.obstacle_max_residual_without_u;
+	if info.obstacle_enabled
+		hocbf_diag.obstacle_eval_count = hocbf_diag.obstacle_eval_count + 1;
+		if isfinite(info.obstacle_h_min)
+			if info.obstacle_h_min < hocbf_diag.min_obstacle_h
+				hocbf_diag.min_obstacle_h = info.obstacle_h_min;
+				hocbf_diag.min_obstacle_h_t = info.t;
+				hocbf_diag.min_obstacle_h_sample_idx = sample_idx;
+				hocbf_diag.min_obstacle_h_step_idx = step_idx;
+			end
+			if info.obstacle_h_min < 0 && ...
+					~isfinite(hocbf_diag.obstacle_first_unsafe_t)
+				hocbf_diag.obstacle_first_unsafe_t = info.t;
+			end
+		end
+		hocbf_diag.max_obstacle_slack = max( ...
+			hocbf_diag.max_obstacle_slack, info.obstacle_slack);
+		if info.obstacle_max_residual_without_u > 0
+			hocbf_diag.obstacle_active_count = ...
+				hocbf_diag.obstacle_active_count + 1;
+		end
+	end
+end
 end

@@ -85,6 +85,14 @@ frame_idx_set = 1:cfg.animation.frame_stride:numel(rollout_times);
 if frame_idx_set(end) ~= numel(rollout_times)
     frame_idx_set = [frame_idx_set, numel(rollout_times)];
 end
+% 某些关键状态（例如第二层端点 snap 后、随后的尾段 FM 步）不能被
+% frame_stride 跳过。调用方可通过 forced_frame_indices 显式保留它们。
+forced_frame_indices = struct_field_default(cfg.animation, ...
+    'forced_frame_indices', zeros(1, 0));
+forced_frame_indices = forced_frame_indices(:)';
+forced_frame_indices = forced_frame_indices( ...
+    forced_frame_indices >= 1 & forced_frame_indices <= numel(rollout_times));
+frame_idx_set = unique([frame_idx_set, forced_frame_indices], 'sorted');
 for frame_nr = 1:numel(frame_idx_set)
     time_idx = frame_idx_set(frame_nr);
     s_now = rollout_times(time_idx);

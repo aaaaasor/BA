@@ -67,9 +67,15 @@ for sample_idx = 1:n_samples
 				constraint_cfg.anchor_clf_targets(sample_idx, :)';
 			clf_margin = struct_field_default(constraint_cfg, ...
 				'anchor_clf_ptzf_initial_margin', 1e-6);
-			anchor_indices = constraint_cfg.anchor_clf_indices(:)';
 			anchor_target = constraint_cfg.anchor_clf_target(:);
-			anchor_error0 = x_init(sample_idx, anchor_indices)' - anchor_target;
+			if isfield(constraint_cfg, 'anchor_clf_matrix')
+				anchor_error0 = constraint_cfg.anchor_clf_matrix * ...
+					x_init(sample_idx, :)' + ...
+					constraint_cfg.anchor_clf_offset(:) - anchor_target;
+			else
+				anchor_indices = constraint_cfg.anchor_clf_indices(:)';
+				anchor_error0 = x_init(sample_idx, anchor_indices)' - anchor_target;
+			end
 			clf_g0 = sum(anchor_error0 .^ 2);
 			constraint_cfg.anchor_clf_ptzf_initial_bound = ...
 				max(clf_g0, 0.0) + clf_margin;
@@ -98,14 +104,87 @@ for sample_idx = 1:n_samples
 		end
 		constraint_cfg.hocbf_alpha1 = alpha1_computed;
 	end
+	% 端点 snap-and-hold（导师方案）: 到倒数 snap_flow_steps 步时把该段首尾点
+	% 的位置+斜率钉成上层生成点(anchor_clf_target)，此后这些维恒定不变。这几步
+	% 关掉 PTCLF（端点已被直接覆盖，不再需要 CLF 拉），但 HOCBF/PTCBF 仍作为
+	% 软约束保留（snap 区在 t≈0.99 > 切换时刻，二者本就带 slack），段内其余点
+	% 在方差软约束下继续 flow matching 贴合固定端点，抹平段边界折角。
+	% 仅对 index 型 CLF（第二层）生效；第三层是增量/矩阵型，端点非下标子集。
+	snap_flow_steps = struct_field_default(constraint_cfg, ...
+		'anchor_snap_flow_steps', 0);
+	do_anchor_snap = constrained && snap_flow_steps > 0 && ...
+		struct_field_default(constraint_cfg, 'ptclf_enabled', false) && ...
+		isfield(constraint_cfg, 'anchor_clf_indices') && ...
+		isfield(constraint_cfg, 'anchor_clf_target');
+	snap_path_index = n_steps + 1 - snap_flow_steps;
+	if do_anchor_snap
+		snap_indices = constraint_cfg.anchor_clf_indices(:)';
+		snap_target = constraint_cfg.anchor_clf_target(:)';
+		% 对照实验：只固定位置(x,y)，斜率(dx/ds,dy/ds)不覆盖，留给
+		% flow/PTCBF/HOCBF 自己决定。anchor_clf_indices 按每个 anchor 点
+		% [x, y, dx/ds, dy/ds] 4 维一组排列（见 build_anchor_clf_targets.m），
+		% 因此每组的前 2 维是位置。
+		position_only = struct_field_default(constraint_cfg, ...
+			'anchor_snap_position_only', false);
+		if position_only
+			anchor_feature_dim = 4;
+			keep_mask = mod(0:(numel(snap_indices) - 1), anchor_feature_dim) < 2;
+			snap_indices = snap_indices(keep_mask);
+			snap_target = snap_target(keep_mask);
+		end
+		snap_target = reshape(snap_target, 1, 1, []);
+		% snap 区专用约束：关掉 PTCLF，保留 HOCBF/PTCBF（软）。
+		snap_constraint_cfg = constraint_cfg;
+		snap_constraint_cfg.ptclf_enabled = false;
+	end
+	% 矩阵型 CLF（第三层增量表示）的 snap-and-hold：端点物理量是状态 z 的
+	% 线性组合 y=M*z+offset，不是某几个下标，不能直接赋值。改用最小范数
+	% 投影：把 z 沿着"改动量最小"的方向调整，使 M*z_new+offset 精确等于
+	% target，即解 M*delta=target-(M*z+offset) 的最小范数解
+	% delta=M'*(M*M')^{-1}*(...)，z_new=z+delta。段内其余(零空间)自由度
+	% 不受影响，继续由 flow/HOCBF/PTCBF 决定。
+	do_anchor_snap_matrix = constrained && snap_flow_steps > 0 && ...
+		struct_field_default(constraint_cfg, 'ptclf_enabled', false) && ...
+		isfield(constraint_cfg, 'anchor_clf_matrix') && ...
+		isfield(constraint_cfg, 'anchor_clf_offset') && ...
+		isfield(constraint_cfg, 'anchor_clf_target');
+	if do_anchor_snap_matrix
+		snap_matrix = constraint_cfg.anchor_clf_matrix;
+		snap_offset = constraint_cfg.anchor_clf_offset(:);
+		snap_matrix_target = constraint_cfg.anchor_clf_target(:);
+		position_only = struct_field_default(constraint_cfg, ...
+			'anchor_snap_position_only', false);
+		if position_only
+			% 端点向量按 [首点(F); 末点(F)] 排列，每组前 2 维是位置
+			% （见 build_increment_endpoint_clf_targets.m）。
+			endpoint_dim = numel(snap_matrix_target) / 2;
+			pos_mask = false(numel(snap_matrix_target), 1);
+			pos_mask([1, 2, endpoint_dim + 1, endpoint_dim + 2]) = true;
+			snap_matrix = snap_matrix(pos_mask, :);
+			snap_offset = snap_offset(pos_mask);
+			snap_matrix_target = snap_matrix_target(pos_mask);
+		end
+		% 投影算子只依赖 M（同一层所有 segment 共享），预先算好复用。
+		snap_projector = snap_matrix' / (snap_matrix * snap_matrix');
+		snap_constraint_cfg_matrix = constraint_cfg;
+		snap_constraint_cfg_matrix.ptclf_enabled = false;
+	end
 	for step_idx = 1:n_steps % 对当前 sample 的每个时间步进行积分
 		dt = dt_vec(step_idx); % 当前步的步长（非均匀网格时逐步不同）
 		t_now = times(step_idx); % 当前时间
 		x_now = reshape(path(step_idx, sample_idx, :), [], 1); % 当前状态
+		% snap 区（最后 snap_flow_steps 步）用无 PTCLF、仅 HOCBF/PTCBF 软约束。
+		if do_anchor_snap && step_idx >= snap_path_index
+			active_constraint_cfg = snap_constraint_cfg;
+		elseif do_anchor_snap_matrix && step_idx >= snap_path_index
+			active_constraint_cfg = snap_constraint_cfg_matrix;
+		else
+			active_constraint_cfg = constraint_cfg;
+		end
 		%% k1
 		if constrained
 			[k1, hocbf_info] = constrained_velocity_field(model_collection, ...
-				t_now, x_now, constraint_cfg, cumulative_variance_now, []);
+				t_now, x_now, active_constraint_cfg, cumulative_variance_now, []);
 			q1 = hocbf_info.sigma2; % 当前 RK4 子步 k1 位置的瞬时方差值
 			diagnostics.hocbf = update_hocbf_diagnostics( ...
 				diagnostics.hocbf, hocbf_info, sample_idx, step_idx, 'k1');
@@ -117,7 +196,7 @@ for sample_idx = 1:n_samples
 		t_k2 = t_now + 0.5 * dt;
 		if constrained
 			[k2, hocbf_info] = constrained_velocity_field(model_collection, ...
-				t_k2, x_k2, constraint_cfg, cumulative_variance_now + 0.5 * dt * q1, []);
+				t_k2, x_k2, active_constraint_cfg, cumulative_variance_now + 0.5 * dt * q1, []);
 			q2 = hocbf_info.sigma2;
 			diagnostics.hocbf = update_hocbf_diagnostics( ...
 				diagnostics.hocbf, hocbf_info, sample_idx, step_idx, 'k2');
@@ -129,7 +208,7 @@ for sample_idx = 1:n_samples
 		t_k3 = t_now + 0.5 * dt;
 		if constrained
 			[k3, hocbf_info] = constrained_velocity_field(model_collection, ...
-				t_k3, x_k3, constraint_cfg, cumulative_variance_now + 0.5 * dt * q2, []);
+				t_k3, x_k3, active_constraint_cfg, cumulative_variance_now + 0.5 * dt * q2, []);
 			q3 = hocbf_info.sigma2;
 			diagnostics.hocbf = update_hocbf_diagnostics( ...
 				diagnostics.hocbf, hocbf_info, sample_idx, step_idx, 'k3');
@@ -141,7 +220,7 @@ for sample_idx = 1:n_samples
 		t_k4 = t_now + dt;
 		if constrained
 			[k4, hocbf_info] = constrained_velocity_field(model_collection, t_k4, ...
-				x_k4, constraint_cfg, cumulative_variance_now + dt * q3, []);
+				x_k4, active_constraint_cfg, cumulative_variance_now + dt * q3, []);
 			q4 = hocbf_info.sigma2;
 			diagnostics.hocbf = update_hocbf_diagnostics( ...
 				diagnostics.hocbf, hocbf_info, sample_idx, step_idx, 'k4');
@@ -158,6 +237,19 @@ for sample_idx = 1:n_samples
 		diagnostics.max_cumulative_variance = max( ...
 			diagnostics.max_cumulative_variance, cumulative_variance_now);
 		path(step_idx + 1, sample_idx, :) = x_now;
+		% snap-and-hold: 到达 snap_path_index 起把端点维钉成上层生成点，
+		% 并在其后每一步重新钉住（保持固定），段内其余维继续 flow。
+		if do_anchor_snap && (step_idx + 1) >= snap_path_index
+			path(step_idx + 1, sample_idx, snap_indices) = snap_target;
+		end
+		% 矩阵型 CLF 的 snap-and-hold: 最小范数投影，把 M*z+offset 精确
+		% 拉回 target，零空间方向（段内其余自由度）不受影响。
+		if do_anchor_snap_matrix && (step_idx + 1) >= snap_path_index
+			y_now = snap_matrix * x_now + snap_offset;
+			snap_delta = snap_projector * (snap_matrix_target - y_now);
+			x_now = x_now + snap_delta;
+			path(step_idx + 1, sample_idx, :) = x_now;
+		end
 	end
 	if mod(sample_idx, 10) == 0 || sample_idx == n_samples
 		batch_elapsed = toc(batch_timer);

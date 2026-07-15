@@ -14,6 +14,10 @@ for idx = 1:numel(constraint_types)
 			% PTCLF 是 anchor tracking/收敛约束，通常可以比 CBF 更软。
 			weights(idx) = struct_field_default(constraint_cfg, ...
 				'anchor_clf_slack_weight', 1e4);
+		case "obstacle"
+			% 障碍 CBF slack 只作可行性兜底，权重设大 -> 近似硬约束。
+			weights(idx) = struct_field_default(constraint_cfg, ...
+				'obstacle_slack_weight', 1e4);
 		otherwise
 			error('Unknown QP constraint type: %s', constraint_types(idx));
 	end

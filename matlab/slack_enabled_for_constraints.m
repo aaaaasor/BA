@@ -23,6 +23,16 @@ for idx = 1:numel(constraint_types)
 			% 逼着它真正精确收敛到目标点，不再靠 slack 偷懒。
 			enabled(idx) = enabled(idx) && ~local_late_stage_enabled( ...
 				constraint_cfg, 'anchor_clf_slack_hard_after_time', t);
+		case "obstacle"
+			% 前期软、后期硬：t < switch 时带 slack（配合此时 variance
+			% 硬，让 flow matching 先把分布捏出来）；t >= switch 后变硬
+			% （此时 variance 转软，让避障优先）。与 hocbf/terminal 的
+			% "前硬后软"方向相反，和 anchor_clf 同向。未配置切换时刻时
+			% 默认 inf，退化为始终跟随 obstacle_slack_enabled（近似硬）。
+			enabled(idx) = struct_field_default(constraint_cfg, ...
+				'obstacle_slack_enabled', global_enabled);
+			enabled(idx) = enabled(idx) && ~local_late_stage_enabled( ...
+				constraint_cfg, 'obstacle_slack_hard_after_time', t);
 		otherwise
 			error('Unknown QP constraint type: %s', constraint_types(idx));
 	end

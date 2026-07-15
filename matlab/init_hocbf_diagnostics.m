@@ -69,4 +69,21 @@ hocbf_diag.trace_anchor_clf_cpt = [];
 hocbf_diag.trace_qp_exitflag = [];
 hocbf_diag.trace_qp_iterations = [];
 hocbf_diag.trace_qp_active_constraint_count = [];
+% 障碍 CBF 诊断: 原始 h(不含 QP slack) 的逐步最小值、slack、约束行数、
+% u=0 时的违反量。用于评价避障是否真的把点挡在障碍外(见 fix 4/5)。
+hocbf_diag.trace_obstacle_h_min = [];
+hocbf_diag.trace_obstacle_slack = [];
+hocbf_diag.trace_obstacle_n_rows = [];
+hocbf_diag.trace_obstacle_max_residual_without_u = [];
+hocbf_diag.min_obstacle_h = inf;
+hocbf_diag.min_obstacle_h_t = nan;
+hocbf_diag.min_obstacle_h_sample_idx = nan;
+hocbf_diag.min_obstacle_h_step_idx = nan;
+hocbf_diag.max_obstacle_slack = 0.0;
+hocbf_diag.obstacle_first_unsafe_t = nan;
+hocbf_diag.obstacle_active_count = 0;   % 有点在障碍附近/内部(需修正)的步数
+hocbf_diag.obstacle_eval_count = 0;     % 开启障碍 CBF 的子步总数
+% 归一化前的行范数追踪(用于 slack 权重重新标定, w_new = w_old*r^2)。
+hocbf_diag.trace_grad_norm = [];             % HOCBF/terminal 共用的 grad_x 行范数
+hocbf_diag.trace_anchor_clf_grad_norm = [];  % anchor_clf 行范数
 end

@@ -49,6 +49,8 @@ terminal_info = terminal_variance_ptcbf(stats, constraint_cfg, ...
 terminal_enabled = terminal_info.enabled;
 clf_info = anchor_clf_info(stats, constraint_cfg, t);
 clf_enabled = clf_info.enabled;
+obstacle_info = obstacle_cbf_info(stats, constraint_cfg, t);
+obstacle_enabled = obstacle_info.enabled;
 
 % HOCBF 的 QP 上界: grad_beta' * u <= integral_bound。
 % residual_without_u 是 u=0 时的违反量，主要用于诊断。
@@ -64,11 +66,18 @@ qp_slack = zeros(0, 1);
 hocbf_slack = 0.0;
 terminal_slack = 0.0;
 clf_slack = 0.0;
+obstacle_slack = 0.0;
 
-% 所有启用的 HOCBF/PTCBF/PTCLF 约束都统一进入 QP。
-% 若三个约束都关闭，A_qp 为空，u 保持 0，即直接使用 GP 原速度。
+% 梯度退化检测(HOCBF/terminal 共用同一个 grad_x): grad_x 趋近 0 时(如
+% 恰好落在 LoG-GP 局部专家拼接边界)，u 对这两行没有一阶影响力，跳过
+% (导师方案: grad 太小时让 u=0)。
+grad_x_active = norm(grad_x) >= grad_tol;
+
+% 所有启用的 HOCBF/PTCBF/PTCLF/障碍 CBF 约束都统一进入 QP。
+% 若约束都关闭，A_qp 为空，u 保持 0，即直接使用 GP 原速度。
 [A_qp, b_qp, constraint_types] = active_qp_constraints(grad_x, ...
-	integral_bound, terminal_info.bound, clf_info, hocbf_enabled);
+	integral_bound, terminal_info.bound, clf_info, hocbf_enabled, ...
+	obstacle_info, grad_x_active);
 if ~isempty(A_qp)
 	[u_col, qp_exitflag, qp_slack, qp_residuals, qp_iterations, qp_solve_seconds] = solve_slack_qp(A_qp, b_qp, ...
 		constraint_types, ...
@@ -79,6 +88,7 @@ if ~isempty(A_qp)
 	hocbf_rows = constraint_types == "integral";
 	terminal_rows = constraint_types == "terminal";
 	clf_rows = constraint_types == "anchor_clf";
+	obstacle_rows = constraint_types == "obstacle";
 	if any(hocbf_rows)
 		hocbf_slack = max(qp_slack(hocbf_rows));
 	end
@@ -87,6 +97,9 @@ if ~isempty(A_qp)
 	end
 	if any(clf_rows)
 		clf_slack = max(qp_slack(clf_rows));
+	end
+	if any(obstacle_rows)
+		obstacle_slack = max(qp_slack(obstacle_rows));
 	end
 end
 constraint_residual = sum(grad_x .* u, 2) + rho;
@@ -105,6 +118,10 @@ diagnostics.u = u';
 diagnostics.correction_norm = norm(u);
 diagnostics.max_abs_u = max(abs(u(:)));
 diagnostics.grad_norm = norm(stats.sigma2_grad_x);
+% HOCBF/terminal 共用同一个 grad_x 行，anchor_clf 另有自己的行；两者的
+% 归一化前范数 r 用于把 slack 权重从"不归一化"标定换算到"全归一化"标定
+% (w_new = w_old * r^2)，见 report_constraint_row_norms.m。
+diagnostics.anchor_clf_grad_norm = norm(clf_info.grad);
 diagnostics.t = t;
 diagnostics.hocbf_alpha1 = alpha1;
 diagnostics.cumulative_variance = cumulative_variance;
@@ -153,7 +170,14 @@ diagnostics.anchor_clf_residual = clf_constraint_residual;
 diagnostics.anchor_clf_raw_residual = clf_raw_residual;
 diagnostics.anchor_clf_residual_without_u = clf_residual_without_u;
 diagnostics.anchor_clf_slack = clf_slack;
-diagnostics.qp_slack = max([hocbf_slack, terminal_slack, clf_slack]);
+diagnostics.obstacle_enabled = obstacle_enabled;
+diagnostics.obstacle_h_min = obstacle_info.h_min;
+diagnostics.obstacle_n_rows = obstacle_info.n_rows;
+diagnostics.obstacle_slack = obstacle_slack;
+diagnostics.obstacle_max_residual_without_u = obstacle_info.max_residual_without_u;
+diagnostics.obstacle_active = obstacle_enabled && ...
+	obstacle_info.max_residual_without_u > 0.0;
+diagnostics.qp_slack = max([hocbf_slack, terminal_slack, clf_slack, obstacle_slack]);
 diagnostics.qp_slack_vector = qp_slack;
 diagnostics.anchor_clf_ptzf_bound = clf_info.ptzf_bound;
 diagnostics.anchor_clf_ptzf_bound_dot = clf_info.ptzf_bound_dot;

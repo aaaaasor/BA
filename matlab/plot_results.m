@@ -54,6 +54,9 @@ y_limits = y_limits + [-y_padding, y_padding];
 %% Target Trajectories
 nexttile;
 hold on;
+if isfield(cfg, 'obstacle')
+    draw_obstacles(cfg.obstacle, 'HandleVisibility', 'off');
+end
 n_training_curves = size(target_points, 2);
 for idx = 1:n_training_curves
     training_curve = squeeze(target_points(:, idx, 1:2));
@@ -85,6 +88,9 @@ title('ODE Source Trajectories');
 %% Rollout Trajectories
 nexttile;
 hold on;
+if isfield(cfg, 'obstacle')
+    draw_obstacles(cfg.obstacle, 'HandleVisibility', 'off');
+end
 if use_segment_plot
     max_curves = min(n_segment_samples, cfg.first_level_generation_samples);
     total_rollout_curves = n_segment_samples;
