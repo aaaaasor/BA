@@ -23,6 +23,16 @@ for idx = 1:numel(constraint_types)
 			% 逼着它真正精确收敛到目标点，不再靠 slack 偷懒。
 			enabled(idx) = enabled(idx) && ~local_late_stage_enabled( ...
 				constraint_cfg, 'anchor_clf_slack_hard_after_time', t);
+		case "anchor_clf_first"
+			enabled(idx) = struct_field_default(constraint_cfg, ...
+				'anchor_clf_slack_enabled', global_enabled);
+			enabled(idx) = enabled(idx) && ~local_late_stage_enabled( ...
+				constraint_cfg, 'anchor_clf_slack_hard_after_time', t);
+		case "anchor_clf_last"
+			enabled(idx) = struct_field_default(constraint_cfg, ...
+				'anchor_clf_slack_enabled', global_enabled);
+			enabled(idx) = enabled(idx) && ~local_late_stage_enabled( ...
+				constraint_cfg, 'anchor_clf_slack_hard_after_time', t);
 		case "obstacle"
 			% 前期软、后期硬：t < switch 时带 slack（配合此时 variance
 			% 硬，让 flow matching 先把分布捏出来）；t >= switch 后变硬

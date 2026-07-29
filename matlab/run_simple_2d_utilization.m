@@ -1,4 +1,4 @@
-% Run the original simple 2D point-flow case and plot LoG-GP utilization.
+% Run the original simple 2D point-flow case and report LoG-GP data usage.
 clear;
 clc;
 
@@ -11,7 +11,6 @@ cfg.random_seed = 7;
 cfg.n_train = 500;
 cfg.n_time_slices = 100;
 cfg.t_min = 0.0;
-cfg.training_utilization_moving_average_window = 25;
 
 cfg.cache.simple_2d_hyperparameter_path = fullfile('outputs', ...
     'LoG_GP_Simple2D_Hyperparameter.mat');
@@ -49,13 +48,10 @@ cfg.gp = optimize_gp_hyperparameters(x_slices, y_slices, cfg.gp, ...
     s_slices);
 
 disp('Fitting simple-2d LoG-GP flow model...');
-cfg.gp.training_trajectory_idx_per_sample = (1:size(x_slices, 2))';
 rng(cfg.random_seed + 2);
 model_cache_path = fullfile(this_dir, cfg.cache.simple_2d_model_path);
 model_collection = fit_or_load_loggp_model(s_slices, x_slices, y_slices, ...
     cfg.gp, model_cache_path, 'simple-2d');
-
-plot_training_trajectory_utilization(cfg, model_collection, 'simple-2d');
 
 %% Console Summary
 total_added = sum(model_collection.n_added_per_output);

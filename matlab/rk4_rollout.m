@@ -61,10 +61,13 @@ end
 for sample_idx = 1:n_samples
 	cumulative_variance_now = 0.0; % 这条 sample 到当前时间为止累计的总方差积分
 	if constrained
-		if struct_field_default(constraint_cfg, 'ptclf_enabled', false) && ...
-				isfield(constraint_cfg, 'anchor_clf_targets')
+		% Endpoint replacement needs the per-sample target even without PTCLF.
+		if isfield(constraint_cfg, 'anchor_clf_targets')
 			constraint_cfg.anchor_clf_target = ...
 				constraint_cfg.anchor_clf_targets(sample_idx, :)';
+		end
+		if struct_field_default(constraint_cfg, 'ptclf_enabled', false) && ...
+				isfield(constraint_cfg, 'anchor_clf_target')
 			clf_margin = struct_field_default(constraint_cfg, ...
 				'anchor_clf_ptzf_initial_margin', 1e-6);
 			anchor_target = constraint_cfg.anchor_clf_target(:);
@@ -76,9 +79,51 @@ for sample_idx = 1:n_samples
 				anchor_indices = constraint_cfg.anchor_clf_indices(:)';
 				anchor_error0 = x_init(sample_idx, anchor_indices)' - anchor_target;
 			end
-			clf_g0 = sum(anchor_error0 .^ 2);
-			constraint_cfg.anchor_clf_ptzf_initial_bound = ...
-				max(clf_g0, 0.0) + clf_margin;
+				clf_g0 = sum(anchor_error0 .^ 2);
+				constraint_cfg.anchor_clf_ptzf_initial_bound = ...
+					max(clf_g0, 0.0) + clf_margin;
+				if struct_field_default(constraint_cfg, ...
+						'sequential_increment_qp_enabled', false) && ...
+						isfield(constraint_cfg, 'anchor_clf_matrix')
+					if mod(numel(anchor_error0), 2) ~= 0
+						error(['Sequential endpoint PTCLF requires equally ', ...
+							'sized first/last endpoint errors.']);
+					end
+					endpoint_dim = numel(anchor_error0) / 2;
+					first_error0 = anchor_error0(1:endpoint_dim);
+					last_error0 = anchor_error0( ...
+						endpoint_dim + (1:endpoint_dim));
+					endpoint_margins = struct_field_default(constraint_cfg, ...
+						'anchor_clf_endpoint_ptzf_initial_margins', []);
+					if isempty(endpoint_margins)
+						endpoint_margins = 0.5 * clf_margin * ones(2, 1);
+					else
+						endpoint_margins = endpoint_margins(:);
+						if numel(endpoint_margins) ~= 2
+							error(['anchor_clf_endpoint_ptzf_initial_margins ', ...
+								'must have two entries.']);
+						end
+					end
+					endpoint_margin_ratios = struct_field_default(constraint_cfg, ...
+						'anchor_clf_endpoint_ptzf_initial_margin_ratios', []);
+					if isempty(endpoint_margin_ratios)
+						endpoint_margin_ratios = zeros(2, 1);
+					else
+						endpoint_margin_ratios = endpoint_margin_ratios(:);
+						if numel(endpoint_margin_ratios) ~= 2 || ...
+								any(endpoint_margin_ratios < 0)
+							error(['anchor_clf_endpoint_ptzf_initial_margin_ratios ', ...
+								'must contain two nonnegative entries.']);
+						end
+					end
+					first_g0 = sum(first_error0 .^ 2);
+					last_g0 = sum(last_error0 .^ 2);
+					constraint_cfg.anchor_clf_endpoint_ptzf_initial_bounds = [ ...
+						(1.0 + endpoint_margin_ratios(1)) * first_g0 + ...
+							endpoint_margins(1); ...
+						(1.0 + endpoint_margin_ratios(2)) * last_g0 + ...
+							endpoint_margins(2)];
+				end
 			clf_g0 = constraint_cfg.anchor_clf_ptzf_initial_bound - clf_margin;
 			fprintf(['  sample %d: anchor CLF g0=%.6g, margin=%.3g, ', ...
 				'gbar0=%.6g\n'], sample_idx, clf_g0, clf_margin, ...
@@ -112,8 +157,9 @@ for sample_idx = 1:n_samples
 	% 仅对 index 型 CLF（第二层）生效；第三层是增量/矩阵型，端点非下标子集。
 	snap_flow_steps = struct_field_default(constraint_cfg, ...
 		'anchor_snap_flow_steps', 0);
+	% Snap is an independent endpoint-replacement experiment.  It must also
+	% work when PTCLF is disabled, so only the target/map availability gates it.
 	do_anchor_snap = constrained && snap_flow_steps > 0 && ...
-		struct_field_default(constraint_cfg, 'ptclf_enabled', false) && ...
 		isfield(constraint_cfg, 'anchor_clf_indices') && ...
 		isfield(constraint_cfg, 'anchor_clf_target');
 	snap_path_index = n_steps + 1 - snap_flow_steps;
@@ -144,35 +190,49 @@ for sample_idx = 1:n_samples
 	% delta=M'*(M*M')^{-1}*(...)，z_new=z+delta。段内其余(零空间)自由度
 	% 不受影响，继续由 flow/HOCBF/PTCBF 决定。
 	do_anchor_snap_matrix = constrained && snap_flow_steps > 0 && ...
-		struct_field_default(constraint_cfg, 'ptclf_enabled', false) && ...
 		isfield(constraint_cfg, 'anchor_clf_matrix') && ...
 		isfield(constraint_cfg, 'anchor_clf_offset') && ...
-		isfield(constraint_cfg, 'anchor_clf_target');
+		(isfield(constraint_cfg, 'anchor_clf_target') || ...
+		 isfield(constraint_cfg, 'anchor_clf_targets'));
 	if do_anchor_snap_matrix
 		snap_matrix = constraint_cfg.anchor_clf_matrix;
 		snap_offset = constraint_cfg.anchor_clf_offset(:);
-		snap_matrix_target = constraint_cfg.anchor_clf_target(:);
+		snap_target_mask = true(size(snap_offset));
 		position_only = struct_field_default(constraint_cfg, ...
 			'anchor_snap_position_only', false);
 		if position_only
 			% 端点向量按 [首点(F); 末点(F)] 排列，每组前 2 维是位置
 			% （见 build_increment_endpoint_clf_targets.m）。
-			endpoint_dim = numel(snap_matrix_target) / 2;
-			pos_mask = false(numel(snap_matrix_target), 1);
+			endpoint_dim = numel(snap_offset) / 2;
+			pos_mask = false(numel(snap_offset), 1);
 			pos_mask([1, 2, endpoint_dim + 1, endpoint_dim + 2]) = true;
 			snap_matrix = snap_matrix(pos_mask, :);
 			snap_offset = snap_offset(pos_mask);
-			snap_matrix_target = snap_matrix_target(pos_mask);
+			snap_target_mask = pos_mask;
 		end
 		% 投影算子只依赖 M（同一层所有 segment 共享），预先算好复用。
 		snap_projector = snap_matrix' / (snap_matrix * snap_matrix');
 		snap_constraint_cfg_matrix = constraint_cfg;
 		snap_constraint_cfg_matrix.ptclf_enabled = false;
+		% The sequential tail QP fixes P1 through u1, solves the internal
+		% obstacle rows through u2/u3/u4, then uses u5 to keep P5 fixed.
+		snap_constraint_cfg_matrix.endpoint_hold_velocity_matrix = snap_matrix;
 	end
 	for step_idx = 1:n_steps % 对当前 sample 的每个时间步进行积分
 		dt = dt_vec(step_idx); % 当前步的步长（非均匀网格时逐步不同）
 		t_now = times(step_idx); % 当前时间
 		x_now = reshape(path(step_idx, sample_idx, :), [], 1); % 当前状态
+		% Enter the snap region on the endpoint manifold before evaluating
+		% flow matching. All following RK stages preserve M*x through the
+		% hard velocity equality M*(mu+u)=0.
+		if do_anchor_snap_matrix && step_idx >= snap_path_index
+			snap_matrix_target = constraint_cfg.anchor_clf_target( ...
+				snap_target_mask);
+			y_now = snap_matrix * x_now + snap_offset;
+			x_now = x_now + snap_projector * ...
+				(snap_matrix_target - y_now);
+			path(step_idx, sample_idx, :) = x_now;
+		end
 		% snap 区（最后 snap_flow_steps 步）用无 PTCLF、仅 HOCBF/PTCBF 软约束。
 		if do_anchor_snap && step_idx >= snap_path_index
 			active_constraint_cfg = snap_constraint_cfg;
@@ -244,12 +304,9 @@ for sample_idx = 1:n_samples
 		end
 		% 矩阵型 CLF 的 snap-and-hold: 最小范数投影，把 M*z+offset 精确
 		% 拉回 target，零空间方向（段内其余自由度）不受影响。
-		if do_anchor_snap_matrix && (step_idx + 1) >= snap_path_index
-			y_now = snap_matrix * x_now + snap_offset;
-			snap_delta = snap_projector * (snap_matrix_target - y_now);
-			x_now = x_now + snap_delta;
-			path(step_idx + 1, sample_idx, :) = x_now;
-		end
+		% Matrix snap is not repeated after RK4. The final operation is
+		% constrained flow matching; its hard endpoint velocity equality keeps
+		% P1/P5 fixed while obstacle PTCBF updates P2/P3/P4.
 	end
 	if mod(sample_idx, 10) == 0 || sample_idx == n_samples
 		batch_elapsed = toc(batch_timer);

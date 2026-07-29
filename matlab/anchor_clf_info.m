@@ -33,6 +33,9 @@ if use_linear_map
 	map_offset = constraint_cfg.anchor_clf_offset(:);
 	e = M * x_now + map_offset - target;
 	clf_info.v = sum(e .^ 2);
+	% Error, drift, and control sensitivity all use the true cumulative map.
+	% Increment decoupling is handled by the sequential QP, not by replacing
+	% the physical Jacobian.
 	clf_info.grad = 2.0 * (M' * e)';
 	clf_drift = 2.0 * sum(e .* (M * mu));
 else
@@ -50,17 +53,17 @@ else
 end
 
 % 梯度退化检测: 段已收敛到目标(e≈0)时，grad 趋近于 0 但不精确为 0。
-% u 对这种行没有一阶影响力，直接跳过(导师方案: grad 太小时让 u=0)。
+% u 对这种行没有一阶影响力，直接跳过
 grad_tol = struct_field_default(constraint_cfg, 'grad_tol', 1e-6);
 if norm(clf_info.grad) < grad_tol
 	clf_info.row_active = false;
 end
 
-% UniConFlow-style PTCLF:
+
 % g_dot <= gamma(gbar(t) - g) + gbar_dot(t)。
 % 这里取线性 class-K: gamma(r) = cpt * r。
 % gbar(t) = gbar0 * exp(-c_g * t/(1-t))，公式本身不变（一次方分母）。
-% shape_dot 用精确求导结果 (1-t)^-2（平方分母，跟导师文档一致）。
+% shape_dot 用精确求导结果 (1-t)^-2（平方分母）。
 % 若 anchor_clf_ptzf_enabled = false，退化为 gbar==0 的普通 CLF：
 % g_dot <= -cpt*g，即标准指数收敛条件，不再需要 cg/margin。
 ptzf_enabled = struct_field_default(constraint_cfg, ...

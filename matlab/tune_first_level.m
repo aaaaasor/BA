@@ -31,7 +31,6 @@ try
     first_gp.n_pretrain = cfg.gp.first_level_n_pretrain;
     first_gp = optimize_gp_hyperparameters(x_slices, y_slices, first_gp, s_slices);
     first_gp.training_accuracy_threshold = cfg.gp.first_level_training_accuracy_threshold;
-    first_gp.training_trajectory_idx_per_sample = (1:size(x_slices, 2))';
     rng(cfg.first_level_fit_seed);
     first_model_cache_path = fullfile(project_dir, cfg.cache.first_level_model_path);
     model_collection = fit_or_load_loggp_model(s_slices, x_slices, y_slices, ...

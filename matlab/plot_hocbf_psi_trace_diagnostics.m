@@ -1,4 +1,11 @@
-function plot_hocbf_psi_trace_diagnostics(cfg, rollout_diagnostics)
+function plot_hocbf_psi_trace_diagnostics(cfg, rollout_diagnostics, constraint_cfg)
+if nargin < 3
+    constraint_cfg = struct();
+end
+show_terminal_diagnostics = ~isfield(constraint_cfg, 'ptcbf_enabled') || ...
+    constraint_cfg.ptcbf_enabled;
+show_anchor_diagnostics = ~isfield(constraint_cfg, 'ptclf_enabled') || ...
+    constraint_cfg.ptclf_enabled;
 trace = rollout_diagnostics.hocbf;
 if isempty(trace.trace_t)
     return;
@@ -70,7 +77,10 @@ else
     terminal_residual = [];
 end
 if has_constraint_traces
-    if isfield(trace, 'trace_hocbf_enabled') && ...
+    if isfield(trace, 'trace_hocbf_filter_active') && ...
+            ~isempty(trace.trace_hocbf_filter_active)
+        hocbf_enabled_trace = logical(trace.trace_hocbf_filter_active(:));
+    elseif isfield(trace, 'trace_hocbf_enabled') && ...
             ~isempty(trace.trace_hocbf_enabled)
         hocbf_enabled_trace = logical(trace.trace_hocbf_enabled(:));
     else
@@ -78,6 +88,12 @@ if has_constraint_traces
     end
     integral_bound(~hocbf_enabled_trace) = nan;
     hocbf_residual(~hocbf_enabled_trace) = nan;
+    if isfield(trace, 'trace_hocbf_row_active') && ...
+            ~isempty(trace.trace_hocbf_row_active)
+        hocbf_row_active_trace = logical( ...
+            trace.trace_hocbf_row_active(:));
+        hocbf_residual(~hocbf_row_active_trace) = nan;
+    end
     if isfield(trace, 'trace_ptcbf_enabled') && ...
             ~isempty(trace.trace_ptcbf_enabled)
         terminal_enabled_trace = logical(trace.trace_ptcbf_enabled(:));
@@ -97,6 +113,7 @@ else
     anchor_clf_bound = [];
     anchor_clf_residual = [];
 end
+has_anchor_clf_traces = has_anchor_clf_traces && show_anchor_diagnostics;
 barrier_b = trace.trace_barrier_b(:);
 relaxed_barrier_b = trace.trace_relaxed_barrier_b(:);
 h_bar = trace.trace_h_bar(:);
@@ -197,9 +214,11 @@ if has_constraint_traces
         plot(trace_t(rows_now), integral_bound(rows_now), ...
             'Color', [0.10, 0.55, 0.25], 'LineWidth', 0.9, ...
             'HandleVisibility', 'off');
-        plot(trace_t(rows_now), terminal_bound(rows_now), ...
-            'Color', [0.85, 0.20, 0.20], 'LineWidth', 0.9, ...
-            'HandleVisibility', 'off');
+        if show_terminal_diagnostics
+            plot(trace_t(rows_now), terminal_bound(rows_now), ...
+                'Color', [0.85, 0.20, 0.20], 'LineWidth', 0.9, ...
+                'HandleVisibility', 'off');
+        end
         if has_anchor_clf_traces
             plot(trace_t(rows_now), anchor_clf_bound(rows_now), ...
                 'Color', [0.45, 0.20, 0.75], 'LineWidth', 0.9, ...
@@ -208,8 +227,10 @@ if has_constraint_traces
     end
     plot(nan, nan, '-', 'Color', [0.10, 0.55, 0.25], ...
         'LineWidth', 0.9, 'DisplayName', 'integral bound');
-    plot(nan, nan, '-', 'Color', [0.85, 0.20, 0.20], ...
-        'LineWidth', 0.9, 'DisplayName', 'terminal bound');
+    if show_terminal_diagnostics
+        plot(nan, nan, '-', 'Color', [0.85, 0.20, 0.20], ...
+            'LineWidth', 0.9, 'DisplayName', 'terminal bound');
+    end
     if has_anchor_clf_traces
         plot(nan, nan, '-', 'Color', [0.45, 0.20, 0.75], ...
             'LineWidth', 0.9, 'DisplayName', 'anchor PTCLF bound');
@@ -227,9 +248,11 @@ if has_constraint_traces
         plot(trace_t(rows_now), hocbf_residual(rows_now), ...
             'Color', [0.10, 0.55, 0.25], 'LineWidth', 0.9, ...
             'HandleVisibility', 'off');
-        plot(trace_t(rows_now), terminal_residual(rows_now), ...
-            'Color', [0.85, 0.20, 0.20], 'LineWidth', 0.9, ...
-            'HandleVisibility', 'off');
+        if show_terminal_diagnostics
+            plot(trace_t(rows_now), terminal_residual(rows_now), ...
+                'Color', [0.85, 0.20, 0.20], 'LineWidth', 0.9, ...
+                'HandleVisibility', 'off');
+        end
         if has_anchor_clf_traces
             plot(trace_t(rows_now), anchor_clf_residual(rows_now), ...
                 'Color', [0.45, 0.20, 0.75], 'LineWidth', 0.9, ...
@@ -240,8 +263,10 @@ if has_constraint_traces
         'LineWidth', 1.0, 'DisplayName', '0');
     plot(nan, nan, '-', 'Color', [0.10, 0.55, 0.25], ...
         'LineWidth', 0.9, 'DisplayName', 'integral residual');
-    plot(nan, nan, '-', 'Color', [0.85, 0.20, 0.20], ...
-        'LineWidth', 0.9, 'DisplayName', 'terminal residual');
+    if show_terminal_diagnostics
+        plot(nan, nan, '-', 'Color', [0.85, 0.20, 0.20], ...
+            'LineWidth', 0.9, 'DisplayName', 'terminal residual');
+    end
     if has_anchor_clf_traces
         plot(nan, nan, '-', 'Color', [0.45, 0.20, 0.75], ...
             'LineWidth', 0.9, 'DisplayName', 'anchor PTCLF residual');
@@ -252,6 +277,7 @@ if has_constraint_traces
     title('QP constraint residuals: should be <= 0');
     legend('Location', 'best');
 end
+
 
 if cfg.output.enabled
     this_file = mfilename('fullpath');

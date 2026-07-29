@@ -6,16 +6,13 @@ cfg.first_level_use_tangent_features = true;
 cfg.n_time_slices = 15;
 cfg.first_level_time_steps = 100;
 cfg.second_level_time_steps = 100;
-% 在 [0.99, rollout_t_max] 这段尾部（PTZF 包络急剧收紧的区域）
+% 在 [0.99, rollout_t_max] 这段尾部（PTZF 急剧收紧的区域）
 % 额外加密时间步，其余区间仍按 second_level_time_steps 均匀划分。
 cfg.second_level_time_refine_start_t = 0.99;
 cfg.second_level_time_refine_extra_steps = 10;
 cfg.third_level_time_steps = 100;
-% 第三层尾段加密: gbar 在 t->1 陡降,加密后
-% 每步收缩量更小,让 PTCLF 的 g 能贴着降下去,减轻末端违反、提高端点精度。
 cfg.third_level_time_refine_start_t = 0.99;
-% cg 提高后 gbar(t) 在 t->1 附近收缩更陡，加密尾段时间步避免数值滞后。
-cfg.third_level_time_refine_extra_steps = 30;
+cfg.third_level_time_refine_extra_steps = 0;
 cfg.t_min = 0.0;
 cfg.rollout_t_max = 0.995;
 cfg.random_seed = 7;
@@ -32,7 +29,12 @@ cfg.second_level_generation_samples = 1;
 cfg.third_level_generation_samples = 1;
 % 第二层实验: 继承第一层避障结果，加入 PTCLF 与障碍规定时间 CBF。
 cfg.stop_after_first_level = false;
-cfg.enable_third_level = false;
+cfg.enable_third_level = true;
+% 关掉可以跳过第二层的 no-obstacle baseline rollout（只用于画
+% before/after 对比图），调参时不需要这张图可以关掉省时间。
+cfg.second_level_run_no_obstacle_baseline = false;
+% 同上，关掉可以跳过第三层的 no-obstacle baseline rollout。
+cfg.third_level_run_no_obstacle_baseline = false;
 cfg.third_level_window_stride = cfg.segment_points_per_segment - 1;
 
 %% Animation
@@ -40,6 +42,9 @@ cfg.animation.enabled = true;
 cfg.animation.trajectory_nr = 1;
 cfg.animation.frame_stride = 2;
 cfg.animation.delay_time = 0.12;
+cfg.animation.third_level_diagnostics_enabled = true;
+% 0: 自动选择三级控制链中峰值最大的 segment；1..16: 固定诊断该 segment。
+cfg.animation.third_level_diagnostic_segment = 0;
 
 %% Output
 cfg.output.enabled = true;
@@ -49,11 +54,15 @@ cfg.cache.first_level_model_path = fullfile('outputs', 'LoG_GP_FirstLevel_Model.
 cfg.cache.second_level_model_path = fullfile('outputs', 'LoG_GP_SecondLevel_Model.mat');
 cfg.cache.third_level_model_path = fullfile('outputs', 'LoG_GP_ThirdLevel_Model.mat');
 cfg.cache.first_level_rollout_path = fullfile('outputs', ...
-    'LoG_GP_FirstLevel_Rollout_C_ObstaclePlusVarianceHOCBF_NearP3.mat');
+    'LoG_GP_FirstLevel_Rollout_A_ObstacleOnly_NearP3_5Curves_Codex1.mat');
 cfg.cache.second_level_rollout_path = fullfile('outputs', ...
-    'LoG_GP_SecondLevel_Rollout_ObstaclePTCBF_HOCBF_PTCLF_Switch0p65.mat');
+    'LoG_GP_SecondLevel_Rollout_C_TunedHbar10_ObstaclePTCBF_VarianceHOCBF_PTCLF_5Curves_Codex1.mat');
+cfg.cache.second_level_no_obstacle_rollout_path = fullfile('outputs', ...
+    'LoG_GP_SecondLevel_Rollout_C_TunedHbar10_VarianceHOCBF_PTCLF_NoObstacle_5Curves_Codex1.mat');
 cfg.cache.third_level_rollout_path = fullfile('outputs', ...
-    'LoG_GP_ThirdLevel_Rollout_WithUFrom0.mat');
+    'LoG_GP_ThirdLevel_Rollout_G_FirstBlockWeight40_1Curve_Codex1.mat');
+cfg.cache.third_level_no_obstacle_rollout_path = fullfile('outputs', ...
+    'LoG_GP_ThirdLevel_Rollout_C_TunedHbar10_VarianceHOCBF_EndpointPTCLF_NoObstacle_5Curves_Codex1.mat');
 cfg.cache.first_level_hyperparameter_path = fullfile('outputs', 'LoG_GP_FirstLevel_Hyperparameter.mat');
 cfg.cache.second_level_hyperparameter_path = fullfile('outputs', 'LoG_GP_SecondLevel_Hyperparameter.mat');
 cfg.cache.third_level_hyperparameter_path = fullfile('outputs', 'LoG_GP_ThirdLevel_Hyperparameter.mat');
@@ -66,8 +75,6 @@ cfg.gp.second_level_length_scale_time_scale_start = 1.0;
 cfg.gp.second_level_length_scale_time_scale_end = 0.5;
 
 cfg.gp.third_level_n_pretrain = 800;
-% 第三层超参数: 第一次运行自动 fitrgp 并缓存到 mat（SigmaN 加载后 /50，
-% 与第二层一致），之后每次直接加载缓存。
 cfg.gp.max_local_data_quantity = 200;
 cfg.gp.max_local_gp_quantity = ceil(2.0 * cfg.n_train * cfg.n_time_slices / ...
     cfg.gp.max_local_data_quantity);
@@ -79,16 +86,14 @@ cfg.gp.first_level_training_accuracy_threshold = 0.8;
 cfg.gp.second_level_training_accuracy_threshold = 2.0;
 cfg.gp.third_level_training_accuracy_threshold = 1.5;
 %% Obstacle (SafeFlow 避障, 物理坐标; 列 = 障碍)
-% 总开关: 关掉 = 完全退回原三层生成(无障碍 CBF / 无终端滤波 / 无 L3 端点硬覆盖)。
+% 总开关: 关掉 = 完全退回原三层生成
 cfg.obstacle.enabled   = true;
 cfg.obstacle.centers   = [0.485; 0.505];   % near the first-level generated waypoint-3 cluster, shifted right
-cfg.obstacle.semi_axes = [0.04; 0.06];     % visible local ellipse for the 5-point first-level curve
+cfg.obstacle.semi_axes = [0.08; 0.12];     % doubled ellipse width and height
 cfg.obstacle.phi0       = 2.0;            % h>=0 时的普通 CBF 系数
 cfg.obstacle.phi1_omega = 4.0;            % h<0 时 blow-up phi1=omega/(1-t)^2, 需 >2
-% 前软后硬(实验②，导师方案): t<switch 软、t>=switch 硬。此处必须是
-% true 才能让 *_slack_hard_after_time 的切换生效(false 会短路成全程硬)。
-cfg.obstacle.slack_enabled = true;        % Experiment B: obstacle soft early, hard after switch
-cfg.obstacle.slack_weight  = 1e4;         % 大权重 -> 近似硬约束
+cfg.obstacle.slack_enabled = false;      
+cfg.obstacle.slack_weight  = 100;
 
 %% Variance Constraint
 cfg.variance_constraint.grad_tol = 1e-6;
@@ -97,9 +102,12 @@ cfg.variance_constraint.grad_tol = 1e-6;
 cfg.variance_constraint.first_level_obstacle_enabled  = true;
 cfg.variance_constraint.first_level_obstacle_points   = [1 2 3 4 5];
 cfg.variance_constraint.second_level_obstacle_enabled = true;
-cfg.variance_constraint.second_level_obstacle_points  = [1 2 3 4 5];
-cfg.variance_constraint.third_level_obstacle_enabled  = false;
-cfg.variance_constraint.third_level_obstacle_points   = [1 2 3 4 5];
+cfg.variance_constraint.second_level_obstacle_points  = [2 3 4];
+% 对照实验结论(2026-07-25): 关掉第三层避障后 P5 误差只从 0.041 降到
+% 0.034(17%)，且最差段仍是同一段 row 8。说明末点误差主要不是避障造成
+% 的，而是 sequential QP 只给末点 u5(杠杆 0.01) 而非完整 u(杠杆 0.24)。
+cfg.variance_constraint.third_level_obstacle_enabled  = true;
+cfg.variance_constraint.third_level_obstacle_points   = [2 3 4];
 cfg.variance_constraint.first_level_integral_uncertainty_budget = 10;
 % Experiment C: 障碍 CBF + variance HOCBF；不启用终端方差 PTCBF。
 cfg.variance_constraint.first_level_hocbf_enabled = true;
@@ -118,11 +126,12 @@ cfg.variance_constraint.first_level_terminal_variance_slack_enabled = false;
 % 前期(t<switch) variance 硬、避障软；后期(t>=switch) variance 软、避障硬
 % (导师方案，实验③)。hocbf 前硬后软，obstacle 前软后硬。
 cfg.variance_constraint.first_level_slack_switch_time = 0.65;
-cfg.variance_constraint.second_level_integral_uncertainty_budget = 3;
+% Second-level experiment C: obstacle PTCBF + variance HOCBF + PTCLF.
+cfg.variance_constraint.second_level_integral_uncertainty_budget = 0.5;
 cfg.variance_constraint.second_level_hocbf_enabled = true;
 cfg.variance_constraint.second_level_hocbf_alpha2 = 0.5;
-cfg.variance_constraint.second_level_hocbf_relaxation_bound = 5;
-cfg.variance_constraint.second_level_psi1_margin = 25;
+cfg.variance_constraint.second_level_hocbf_relaxation_bound = 8;
+cfg.variance_constraint.second_level_psi1_margin = 80;
 cfg.variance_constraint.second_level_diagnostics = true;
 cfg.variance_constraint.second_level_ptcbf_enabled = false;
 cfg.variance_constraint.second_level_terminal_variance_beta_final = 5.0;
@@ -135,45 +144,82 @@ cfg.variance_constraint.second_level_anchor_clf_ptzf_cg = 2.0;
 cfg.variance_constraint.second_level_anchor_clf_cpt = 150;
 cfg.variance_constraint.second_level_anchor_clf_ptzf_initial_margin = 4;
 cfg.variance_constraint.second_level_slack_enabled = true;
+% hocbf_slack_enabled=false: t < switch 硬，t >= switch 才靠
+% hocbf_slack_late_start_time(=slack_switch_time) 打开 slack，实现
+% "前硬后软"。
 cfg.variance_constraint.second_level_hocbf_slack_enabled = false;
 cfg.variance_constraint.second_level_terminal_variance_slack_enabled = false;
 cfg.variance_constraint.second_level_anchor_clf_slack_enabled = true;
-% 统一切换时刻: t < switch 时 PTCLF 带 slack、HOCBF/PTCBF 硬，之后互换。
+% Before 0.55: variance HOCBF hard, obstacle PTCBF/PTCLF soft.
+% From 0.55: variance HOCBF may use slack, obstacle PTCBF/PTCLF become hard.
 cfg.variance_constraint.second_level_slack_switch_time = 0.65;
+cfg.variance_constraint.second_level_anchor_clf_slack_hard_after_time = 0.65;
+cfg.variance_constraint.second_level_obstacle_slack_enabled = true;
+cfg.variance_constraint.second_level_obstacle_activation_time = 0.30;
+cfg.variance_constraint.second_level_obstacle_slack_hard_after_time = 0.65;
 cfg.variance_constraint.second_level_hocbf_slack_weight = 66.8;
 cfg.variance_constraint.second_level_terminal_variance_slack_weight = 66.8;
-cfg.variance_constraint.second_level_anchor_clf_slack_weight = 31.4;
-cfg.variance_constraint.second_level_anchor_snap_flow_steps = 0;
+cfg.variance_constraint.second_level_anchor_clf_slack_weight = 30;
+cfg.variance_constraint.second_level_anchor_snap_flow_steps = 5;
 cfg.variance_constraint.second_level_anchor_snap_position_only = false;
 cfg.variance_constraint.second_level_anchor_clf_position_only = false;
 cfg.variance_constraint.third_level_integral_uncertainty_budget = 5;
+% 第三层单独调小梯度退化门槛，减少 HOCBF 那一行在尾段被整行跳过的机会；
+% 不写时一二层仍用共用的 cfg.variance_constraint.grad_tol(=1e-6)。
+cfg.variance_constraint.third_level_grad_tol = 1e-3;
 cfg.variance_constraint.third_level_hocbf_enabled = true;
-cfg.variance_constraint.third_level_hocbf_alpha2 = 2.0;
-cfg.variance_constraint.third_level_hocbf_relaxation_bound = 5.0;
-cfg.variance_constraint.third_level_psi1_margin = 5.0;
+cfg.variance_constraint.third_level_hocbf_alpha2 = 0.001;
+cfg.variance_constraint.third_level_hocbf_relaxation_bound = 5;
+cfg.variance_constraint.third_level_psi1_margin = 2;
 cfg.variance_constraint.third_level_diagnostics = true;
 cfg.variance_constraint.third_level_ptcbf_enabled = true;
-cfg.variance_constraint.third_level_terminal_variance_beta_final = 8;
+cfg.variance_constraint.third_level_terminal_variance_ptcbf_end_time = 0.85;
+cfg.variance_constraint.third_level_terminal_variance_beta_final = 5;
 cfg.variance_constraint.third_level_terminal_variance_ptzf_initial_margin = 4.0;
 cfg.variance_constraint.third_level_terminal_variance_ptzf_gamma = 0.3;
-cfg.variance_constraint.third_level_terminal_variance_alpha = 0.5;
+cfg.variance_constraint.third_level_terminal_variance_alpha = 9.0;
+% Continuous endpoint tracking: PTCLF first distributes its correction over
+% all increment blocks. The internal obstacle PTCBF then uses that control
+% as its reference without imposing the P5 PTCLF row a second time.
 cfg.variance_constraint.third_level_ptclf_enabled = true;
+cfg.variance_constraint.third_level_sequential_increment_qp_enabled = true;
+cfg.variance_constraint.third_level_sequential_ptclf_reference_enabled = true;
+cfg.variance_constraint.third_level_first_block_control_weight = 40;
+cfg.variance_constraint.third_level_sequential_ptclf_reference_impl_version = 6;
+cfg.variance_constraint.third_level_hocbf_filter_end_time = 0.85;
 cfg.variance_constraint.third_level_anchor_clf_ptzf_enabled = true;
-cfg.variance_constraint.third_level_anchor_clf_ptzf_cg = 0.8;
-cfg.variance_constraint.third_level_anchor_clf_cpt = 230;
-cfg.variance_constraint.third_level_anchor_clf_ptzf_initial_margin = 5;
-cfg.variance_constraint.third_level_slack_enabled = true;
+cfg.variance_constraint.third_level_anchor_clf_ptzf_cg = 1.3;
+cfg.variance_constraint.third_level_anchor_clf_cpt = 280;
+cfg.variance_constraint.third_level_anchor_clf_endpoint_cpt = [80; 80];
+cfg.variance_constraint.third_level_anchor_clf_endpoint_ptzf_cg = [5.0; 5.0];
+% Per-endpoint PTZF bound: gbar0 = (1 + ratio) * g0 + absolute margin.
+% A relative margin keeps P1/P5 and all segments on the same error scale.
+cfg.variance_constraint.third_level_anchor_clf_endpoint_ptzf_initial_margin_ratios = [0.10; 0.10];
+cfg.variance_constraint.third_level_anchor_clf_endpoint_ptzf_initial_margins = [0.175; 0.175];
+cfg.variance_constraint.third_level_anchor_clf_ptzf_initial_margin = 0.35;
+cfg.variance_constraint.third_level_slack_enabled = false;
 cfg.variance_constraint.third_level_hocbf_slack_enabled = false;
 cfg.variance_constraint.third_level_terminal_variance_slack_enabled = false;
-cfg.variance_constraint.third_level_anchor_clf_slack_enabled = true;
-% t < 0.55: PTCLF 带 slack、HOCBF/PTCBF 硬；t >= 0.55: 互换
-% (HOCBF/PTCBF 变软、PTCLF 变硬)。
-cfg.variance_constraint.third_level_slack_switch_time = 0.55;
-cfg.variance_constraint.third_level_hocbf_slack_weight = 10;
-cfg.variance_constraint.third_level_terminal_variance_slack_weight = 30;
-cfg.variance_constraint.third_level_anchor_clf_slack_weight = 80;
-% 倒数 10 步把段端点(矩阵型 CLF)用最小范数投影钉到目标值,之后继续
-% rollout(段内其余自由度不受影响)。仅在 ptclf_enabled 时生效。
-cfg.variance_constraint.third_level_anchor_snap_flow_steps = 10;
+cfg.variance_constraint.third_level_anchor_clf_slack_enabled = false;
+cfg.variance_constraint.third_level_slack_switch_time = inf;
+cfg.variance_constraint.third_level_anchor_clf_slack_hard_after_time = 0.85;
+cfg.variance_constraint.third_level_obstacle_slack_enabled = false;
+cfg.variance_constraint.third_level_obstacle_activation_time = 0.00;
+cfg.variance_constraint.third_level_obstacle_slack_hard_after_time = 0.85;
+cfg.variance_constraint.third_level_obstacle_slack_weight = 100;
+cfg.variance_constraint.third_level_obstacle_phi1_omega = 0.2;
+% 障碍内 h<0 时采用分段增益：前段先弱拉回，等 PTCLF 基本收敛后
+% 再切换到 omega/(1-t_eff)^2 的 blow-up 增益。
+cfg.variance_constraint.third_level_obstacle_phi1_early_gain = 0.05;
+cfg.variance_constraint.third_level_obstacle_phi1_switch_time = 0.40;
+cfg.variance_constraint.third_level_obstacle_phi0 = 5.0;
+cfg.variance_constraint.third_level_hocbf_slack_weight = 0.001;
+cfg.variance_constraint.third_level_terminal_variance_slack_weight = 1;
+cfg.variance_constraint.third_level_anchor_clf_slack_weight = 5000;
+cfg.variance_constraint.third_level_anchor_clf_first_slack_weight = 5000;
+cfg.variance_constraint.third_level_anchor_clf_last_slack_weight = 1e8;
+cfg.variance_constraint.third_level_anchor_snap_flow_steps = 5;
 cfg.variance_constraint.third_level_anchor_snap_position_only = false;
+cfg.variance_constraint.third_level_anchor_snap_hold_impl_version = 3;
+cfg.variance_constraint.third_level_post_endpoint_overwrite_enabled = false;
 end

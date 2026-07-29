@@ -1,4 +1,4 @@
-function [targets, clf_matrix, clf_offset] = ...
+function [targets, clf_matrix, clf_offset, endpoint_owner_std] = ...
     build_increment_endpoint_clf_targets(parent_segment_data, ...
     n_anchor_samples, n_child_samples, n_parent_segments, ...
     n_points_per_segment, data_transform)
@@ -39,6 +39,16 @@ A(feature_dim + tangent_rows, last_col0 + tangent_rows) = ...
 % v = diag(std)*z + mean, 端点 = A*v = (A*diag(std))*z + A*mean。
 clf_matrix = A .* std_vec';
 clf_offset = A * mean_vec;
+
+% The split sequential QP assigns P1 to the first increment block and P5
+% to the last increment block.  Standardize each endpoint residual with
+% the std of its owner block.  For P5 this does not assign targets to the
+% earlier increments; it only changes the metric of the cumulative
+% endpoint residual.  In particular, the owner-block part of the endpoint
+% Jacobian is unit-scaled in all four position/tangent channels.
+first_cols = 1:feature_dim;
+last_cols = (n_points_per_segment - 1) * feature_dim + (1:feature_dim);
+endpoint_owner_std = [std_vec(first_cols); std_vec(last_cols)];
 
 % targets 行顺序与第三层 rollout 的 sample/segment 顺序一致：
 % 第三层 eval 内按父段 1..n_parent_segments、父段内子段 1..4 展开。
