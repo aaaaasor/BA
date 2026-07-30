@@ -1,5 +1,23 @@
-% 初始化诊断 struct 的所有字段
-function hocbf_diag = init_hocbf_diagnostics()
+% 初始化诊断 struct 的所有字段。
+% trace_capacity/state_dim 为空时保留旧的动态增长行为；rk4_rollout 在
+% diagnostics 开启时传入精确容量，避免每个 RK4 子步反复扩展数组。
+function hocbf_diag = init_hocbf_diagnostics(trace_capacity, state_dim)
+if nargin < 1 || isempty(trace_capacity)
+	trace_capacity = 0;
+end
+if nargin < 2 || isempty(state_dim)
+	state_dim = 0;
+end
+validateattributes(trace_capacity, {'numeric'}, ...
+	{'scalar', 'integer', 'nonnegative', 'finite'}, ...
+	mfilename, 'trace_capacity');
+validateattributes(state_dim, {'numeric'}, ...
+	{'scalar', 'integer', 'nonnegative', 'finite'}, ...
+	mfilename, 'state_dim');
+if trace_capacity > 0 && state_dim < 1
+	error('init_hocbf_diagnostics:MissingStateDimension', ...
+		'state_dim must be positive when trace_capacity is positive.');
+end
 hocbf_diag.max_correction_norm = 0.0;
 hocbf_diag.max_grad_norm = 0.0;
 hocbf_diag.max_sigma2 = 0.0;
@@ -158,4 +176,37 @@ hocbf_diag.obstacle_eval_count = 0;     % 开启障碍 CBF 的子步总数
 % 归一化前的行范数追踪(用于 slack 权重重新标定, w_new = w_old*r^2)。
 hocbf_diag.trace_grad_norm = [];             % HOCBF/terminal 共用的 grad_x 行范数
 hocbf_diag.trace_anchor_clf_grad_norm = [];  % anchor_clf 行范数
+hocbf_diag.n_trace_entries = 0;
+hocbf_diag.preallocated_trace_capacity = trace_capacity;
+
+if trace_capacity > 0
+	hocbf_diag = preallocate_trace_fields( ...
+		hocbf_diag, trace_capacity, state_dim);
+end
+end
+
+function hocbf_diag = preallocate_trace_fields( ...
+	hocbf_diag, trace_capacity, state_dim)
+vector_trace_fields = { ...
+	'trace_x', 'trace_mu', 'trace_v', 'trace_u', ...
+	'trace_u_ptclf_reference', 'trace_u_after_ptcbf', ...
+	'trace_u_ptcbf_correction', 'trace_u_hocbf_correction', ...
+	'trace_u_contribution_hocbf', 'trace_u_contribution_terminal', ...
+	'trace_u_contribution_anchor_clf', ...
+	'trace_u_contribution_obstacle'};
+field_names = fieldnames(hocbf_diag);
+for field_idx = 1:numel(field_names)
+	field_name = field_names{field_idx};
+	if ~strncmp(field_name, 'trace_', 6)
+		continue;
+	end
+	if strcmp(field_name, 'trace_rho_components')
+		field_width = 5;
+	elseif any(strcmp(field_name, vector_trace_fields))
+		field_width = state_dim;
+	else
+		field_width = 1;
+	end
+	hocbf_diag.(field_name) = nan(trace_capacity, field_width);
+end
 end

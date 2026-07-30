@@ -3,9 +3,6 @@ function [u_col, exitflag, qp_slack, qp_residuals, qp_iterations, ...
 	qp_u_equality_contribution] = solve_slack_qp(A_qp, ...
 	b_qp, constraint_types, constraint_cfg, t, stats, terminal_info, ...
 	integral_residual_without_u, terminal_residual_without_u)
-if ~(exist('quadprog', 'file') == 2 || exist('quadprog', 'builtin') == 5)
-	error('Constrained rollout QP requires quadprog from Optimization Toolbox.');
-end
 n_u = numel(stats.mu);
 n_constraints = size(A_qp, 1);
 slack_enabled = slack_enabled_for_constraints(constraint_cfg, constraint_types, t);
@@ -135,6 +132,63 @@ if all(b_qp >= 0.0) && zero_equality_feasible
 	return;
 end
 
+% 闭式 active-set 枚举（含 slack 行）。该后端按层开关：第一、二层保持
+% quadprog，第三层才优先使用小行数闭式解。
+% 在 z=[u; delta] 里整个 slack QP 仍然是一个加权最小范数问题:
+%   min 0.5*||diag(control_weight, sqrt(w))*z||^2
+%   s.t. [A_qp, A_slack]*z <= b_qp,  [0, -I]*z <= 0,  [Aeq_u, 0]*z = beq
+% 所以硬约束用的那套闭式枚举可以原样解软问题，且是精确解。
+%
+% 必须优先于 quadprog 的原因: interior-point-convex 在存在平行行时会在
+% MaxIterations 处停滞返回 exitflag=0——integral 与 terminal 两行共用
+% 同一个 grad_beta，行归一化后完全相同(实测 cosine=1.0000,
+% cond(A_qp)=6e15)。此时原始最优解其实唯一且良态(诊断里 fval 恰等于
+% 0.5*||u||^2、constrviolation=0)，卡住的只是对偶最优性判据，因为重复行
+% 的乘子不唯一，KKT 矩阵秩亏。闭式枚举用 pinv 解 Gram，天然取重复行乘子
+% 的最小范数解，不受这种退化影响。
+closed_form_max_rows = 12;
+closed_form_rows = n_constraints + n_slack;
+closed_form_enabled = struct_field_default(constraint_cfg, ...
+	'closed_form_solver_enabled', false);
+if closed_form_enabled && closed_form_rows <= closed_form_max_rows
+	A_closed = [A_solve; [zeros(n_slack, n_u), -eye(n_slack)]];
+	b_closed = [b_qp(:); zeros(n_slack, 1)];
+	z_weight = [control_weight; sqrt(slack_objective_weights(:))];
+	try
+		[z_closed, exitflag, ~, closed_residuals, qp_iterations, ...
+			qp_solve_seconds, closed_row_contributions, ...
+			closed_equality_contribution] = ...
+			solve_weighted_min_norm_halfspaces( ...
+				A_closed, b_closed, z_weight, Aeq_solve, beq);
+		u_col = z_closed(1:n_u);
+		qp_slack = zeros(n_constraints, 1);
+		% slack 属于归一化后的行，换回原始约束单位再交给诊断。
+		qp_slack(slack_rows) = ...
+			row_scale(slack_rows) .* z_closed(n_u + 1:end);
+		% 末尾 n_slack 行是 delta>=0 的界，不属于外部约束，丢掉。
+		qp_residuals = closed_residuals(1:n_constraints);
+		qp_u_row_contributions = ...
+			closed_row_contributions(1:n_constraints, 1:n_u);
+		qp_u_equality_contribution = closed_equality_contribution(1:n_u);
+		return;
+	catch closed_err
+		% 硬约束真不可行时才会走到这里。交给 quadprog 复现，让下面的
+		% failure dump 打出完整结构，不要在这里把问题吞掉。
+		warning('solve_slack_qp:closedFormFailed', ...
+			['Closed-form active-set solve failed at t=%.6g (%s); ', ...
+			'falling back to quadprog.'], t, closed_err.message);
+	end
+end
+
+if ~(exist('quadprog', 'file') == 2 || exist('quadprog', 'builtin') == 5)
+	if closed_form_enabled
+		error(['Constrained rollout requires quadprog when more than %d ', ...
+			'closed-form rows are active.'], closed_form_max_rows);
+	else
+		error('This rollout level is configured to use quadprog, but quadprog is unavailable.');
+	end
+end
+
 options = optimoptions('quadprog', 'Display', 'off', ...
 	'MaxIterations', 2000, 'ConstraintTolerance', 1e-6, ...
 	'OptimalityTolerance', 1e-6, 'StepTolerance', 1e-8);
@@ -143,6 +197,104 @@ qp_timer = tic;
 	H, f, A_solve, b_qp, Aeq_solve, beq, lb, [], [], options);
 qp_solve_seconds = toc(qp_timer);
 qp_iterations = qp_output.iterations;
+
+% Interior-point-convex can exhaust its iteration budget when two soft
+% rows are parallel (the integral and terminal variance rows share the
+% same grad_beta) while nearby PTCLF/obstacle rows are hard. In that case
+% quadprog can already have a strictly feasible, small solution but still
+% return exitflag=0 because the dual optimality test has stalled. Refine
+% that feasible point with active-set, which is less sensitive to the
+% duplicated half-space geometry.
+if exitflag <= 0 && ~isempty(z_col) && all(isfinite(z_col))
+	primary_z = z_col;
+	primary_fval = qp_fval;
+	primary_output = qp_output;
+	primary_lambda = qp_lambda;
+	primary_ineq_violation = max([A_solve * primary_z - b_qp; 0.0]);
+	primary_eq_violation = 0.0;
+	if ~isempty(Aeq_solve)
+		primary_eq_violation = norm(Aeq_solve * primary_z - beq, inf);
+	end
+	primary_lb_violation = max([lb - primary_z; 0.0]);
+	primary_feasible = primary_ineq_violation <= 1e-6 && ...
+		primary_eq_violation <= 1e-6 && primary_lb_violation <= 1e-9;
+
+	if primary_feasible
+		try
+			active_options = optimoptions('quadprog', 'Display', 'off', ...
+				'Algorithm', 'active-set', 'MaxIterations', 500, ...
+				'ConstraintTolerance', 1e-7, ...
+				'OptimalityTolerance', 1e-7, 'StepTolerance', 1e-10);
+			active_timer = tic;
+			[z_active, fval_active, exitflag_active, output_active, ...
+				lambda_active] = quadprog(H, f, A_solve, b_qp, ...
+				Aeq_solve, beq, lb, [], primary_z, active_options);
+			qp_solve_seconds = qp_solve_seconds + toc(active_timer);
+			active_feasible = ~isempty(z_active) && ...
+				all(isfinite(z_active));
+			if active_feasible
+				active_feasible = max([A_solve * z_active - b_qp; 0.0]) ...
+					<= 1e-6 && max([lb - z_active; 0.0]) <= 1e-9;
+				if active_feasible && ~isempty(Aeq_solve)
+					active_feasible = norm( ...
+						Aeq_solve * z_active - beq, inf) <= 1e-6;
+				end
+			end
+			if active_feasible && exitflag_active > 0
+				z_col = z_active;
+				qp_fval = fval_active;
+				exitflag = exitflag_active;
+				qp_output = output_active;
+				qp_lambda = lambda_active;
+				qp_iterations = qp_iterations + output_active.iterations;
+			elseif active_feasible && fval_active <= primary_fval
+				z_col = z_active;
+				qp_fval = fval_active;
+				qp_output = output_active;
+				qp_lambda = lambda_active;
+				qp_iterations = qp_iterations + output_active.iterations;
+			end
+		catch active_err
+			warning('solve_slack_qp:activeSetRetryFailed', ...
+				'Active-set retry failed at t=%.6g: %s', t, ...
+				active_err.message);
+		end
+
+		% A feasible iterate with a modest first-order residual is safe to
+		% apply. Do not abort a valid RK rollout only because the dual
+		% stopping test reached MaxIterations.
+		candidate_ineq_violation = max([A_solve * z_col - b_qp; 0.0]);
+		candidate_eq_violation = 0.0;
+		if ~isempty(Aeq_solve)
+			candidate_eq_violation = norm(Aeq_solve * z_col - beq, inf);
+		end
+		candidate_lb_violation = max([lb - z_col; 0.0]);
+		candidate_first_order = inf;
+		if isfield(qp_output, 'firstorderopt')
+			candidate_first_order = qp_output.firstorderopt;
+		end
+		if exitflag <= 0 && candidate_ineq_violation <= 1e-6 && ...
+				candidate_eq_violation <= 1e-6 && ...
+				candidate_lb_violation <= 1e-9 && ...
+				candidate_first_order <= 1.0 && isfinite(qp_fval)
+			exitflag = 1;
+			warning('solve_slack_qp:acceptedFeasibleIterate', ...
+				['Accepted feasible quadprog iterate at t=%.6g after the ', ...
+				'optimality iteration limit (firstorderopt=%.3g).'], ...
+				t, candidate_first_order);
+		end
+
+		% Restore the original feasible candidate if an unsuccessful retry
+		% replaced it with anything worse.
+		if exitflag <= 0 && (~all(isfinite(z_col)) || ...
+				max([A_solve * z_col - b_qp; 0.0]) > 1e-6)
+			z_col = primary_z;
+			qp_fval = primary_fval;
+			qp_output = primary_output;
+			qp_lambda = primary_lambda;
+		end
+	end
+end
 % 失败回退：quadprog 偶尔在"最优解在可行域深内部、约束全松弛"的实例上
 % 停滞(exitflag<=0)，返回一个可行但远非最优的垃圾解(见诊断:firstorderopt
 % 巨大、solution norm 大)。若此时所有约束的 bound 都 >= 0，则 u=0(delta=0)

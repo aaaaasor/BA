@@ -51,8 +51,8 @@ plot(nan,nan,'Color',[0.85,0.20,0.20],'DisplayName','PTCBF residual');
 grid on; xlabel('s'); ylabel('constraint residual (should be <= 0)');
 title('Residuals after QP'); legend show;
 
-qp_png = fullfile(project_dir,'outputs','tune_first_level_qp.png');
-exportgraphics(fig, qp_png, 'Resolution', 130);
+qp_emf = fullfile(project_dir,'outputs','tune_first_level_qp.emf');
+export_graphics_compat(fig, qp_emf);
 close(fig);
 
 % Trajectory panel: reconstructed vs target
@@ -74,8 +74,8 @@ end
 grid on; axis equal; xlabel('x'); ylabel('y');
 title(sprintf('First-level rollout vs %d target trajectories', size(target_points,2)));
 legend('Location','best');
-traj_png = fullfile(project_dir,'outputs','tune_first_level_traj.png');
-exportgraphics(fig2, traj_png, 'Resolution', 130);
+traj_emf = fullfile(project_dir,'outputs','tune_first_level_traj.emf');
+export_graphics_compat(fig2, traj_emf);
 close(fig2);
 
 fprintf('saved %s\n', qp_png);

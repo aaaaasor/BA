@@ -24,12 +24,20 @@ state_dim = size(x_init, 2);
 path = zeros(n_steps + 1, n_samples, state_dim); % path(time_idx, sample_idx, state_idx)
 path(1, :, :) = x_init; % 保存初始状态
 constrained = ~isempty(constraint_cfg);
+collect_diagnostics = constrained && struct_field_default( ...
+	constraint_cfg, 'diagnostics', false);
 if constrained
 	% rollout 实际只能跑到 t1(<1，PTZF公式在t=1处有奇点），把这个映射
 	% 偏移量传给 terminal/CLF，让它们在 t=t1 时把 t_eff 当作精确的 1。
 	constraint_cfg.ptzf_time_shift = max(1.0 - t1, 0.0);
 end
-diagnostics.hocbf = init_hocbf_diagnostics();
+if collect_diagnostics
+	trace_capacity = 4 * n_samples * n_steps;
+	diagnostics.hocbf = init_hocbf_diagnostics( ...
+		trace_capacity, state_dim);
+else
+	diagnostics.hocbf = init_hocbf_diagnostics();
+end
 diagnostics.max_cumulative_variance = 0.0;
 diagnostics.rollout_elapsed_seconds = 0.0; % 初始化 roll-out 时间统计
 loggp_call_stats('reset'); % 清零 LoG-GP 触发次数/local GP 激活数/耗时统计
@@ -246,8 +254,10 @@ for sample_idx = 1:n_samples
 			[k1, hocbf_info] = constrained_velocity_field(model_collection, ...
 				t_now, x_now, active_constraint_cfg, cumulative_variance_now, []);
 			q1 = hocbf_info.sigma2; % 当前 RK4 子步 k1 位置的瞬时方差值
-			diagnostics.hocbf = update_hocbf_diagnostics( ...
-				diagnostics.hocbf, hocbf_info, sample_idx, step_idx, 'k1');
+			if collect_diagnostics
+				diagnostics.hocbf = update_hocbf_diagnostics( ...
+					diagnostics.hocbf, hocbf_info, sample_idx, step_idx, 'k1');
+			end
 		else
 			k1 = constrained_velocity_field(model_collection, t_now, x_now, [], 0.0, []);
 		end
@@ -258,8 +268,10 @@ for sample_idx = 1:n_samples
 			[k2, hocbf_info] = constrained_velocity_field(model_collection, ...
 				t_k2, x_k2, active_constraint_cfg, cumulative_variance_now + 0.5 * dt * q1, []);
 			q2 = hocbf_info.sigma2;
-			diagnostics.hocbf = update_hocbf_diagnostics( ...
-				diagnostics.hocbf, hocbf_info, sample_idx, step_idx, 'k2');
+			if collect_diagnostics
+				diagnostics.hocbf = update_hocbf_diagnostics( ...
+					diagnostics.hocbf, hocbf_info, sample_idx, step_idx, 'k2');
+			end
 		else
 			k2 = constrained_velocity_field(model_collection, t_k2, x_k2, [], 0.0, []);
 		end
@@ -270,8 +282,10 @@ for sample_idx = 1:n_samples
 			[k3, hocbf_info] = constrained_velocity_field(model_collection, ...
 				t_k3, x_k3, active_constraint_cfg, cumulative_variance_now + 0.5 * dt * q2, []);
 			q3 = hocbf_info.sigma2;
-			diagnostics.hocbf = update_hocbf_diagnostics( ...
-				diagnostics.hocbf, hocbf_info, sample_idx, step_idx, 'k3');
+			if collect_diagnostics
+				diagnostics.hocbf = update_hocbf_diagnostics( ...
+					diagnostics.hocbf, hocbf_info, sample_idx, step_idx, 'k3');
+			end
 		else
 			k3 = constrained_velocity_field(model_collection, t_k3, x_k3, [], 0.0, []);
 		end
@@ -282,8 +296,10 @@ for sample_idx = 1:n_samples
 			[k4, hocbf_info] = constrained_velocity_field(model_collection, t_k4, ...
 				x_k4, active_constraint_cfg, cumulative_variance_now + dt * q3, []);
 			q4 = hocbf_info.sigma2;
-			diagnostics.hocbf = update_hocbf_diagnostics( ...
-				diagnostics.hocbf, hocbf_info, sample_idx, step_idx, 'k4');
+			if collect_diagnostics
+				diagnostics.hocbf = update_hocbf_diagnostics( ...
+					diagnostics.hocbf, hocbf_info, sample_idx, step_idx, 'k4');
+			end
 		else
 			k4 = constrained_velocity_field(model_collection, t_k4, x_k4, [], 0.0, []);
 		end
@@ -317,10 +333,14 @@ for sample_idx = 1:n_samples
 		batch_timer = tic;
 	end
 end
+diagnostics.hocbf = finalize_hocbf_diagnostics(diagnostics.hocbf);
 diagnostics.rollout_elapsed_seconds = toc(rollout_timer);
 % 只有在开启约束，并且配置里要求输出诊断信息时，才打印 HOCBF 的诊断结果
-if constrained && constraint_cfg.diagnostics
-	print_hocbf_diagnostics(diagnostics.hocbf, diagnostics.rollout_elapsed_seconds);
+if collect_diagnostics
+	print_hocbf_diagnostics(diagnostics.hocbf, ...
+		diagnostics.rollout_elapsed_seconds, ...
+		struct_field_default(constraint_cfg, ...
+		'closed_form_solver_enabled', false));
 end
 diagnostics.loggp_call_stats = loggp_call_stats('report');
 end

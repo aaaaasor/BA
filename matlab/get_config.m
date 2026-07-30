@@ -30,6 +30,9 @@ cfg.third_level_generation_samples = 1;
 % 第二层实验: 继承第一层避障结果，加入 PTCLF 与障碍规定时间 CBF。
 cfg.stop_after_first_level = false;
 cfg.enable_third_level = true;
+% Run a matched first-level baseline with the same initial samples and
+% variance constraints, changing only obstacle_enabled=false.
+cfg.first_level_run_no_obstacle_baseline = false;
 % 关掉可以跳过第二层的 no-obstacle baseline rollout（只用于画
 % before/after 对比图），调参时不需要这张图可以关掉省时间。
 cfg.second_level_run_no_obstacle_baseline = false;
@@ -55,10 +58,12 @@ cfg.cache.second_level_model_path = fullfile('outputs', 'LoG_GP_SecondLevel_Mode
 cfg.cache.third_level_model_path = fullfile('outputs', 'LoG_GP_ThirdLevel_Model.mat');
 cfg.cache.first_level_rollout_path = fullfile('outputs', ...
     'LoG_GP_FirstLevel_Rollout_A_ObstacleOnly_NearP3_5Curves_Codex1.mat');
+cfg.cache.first_level_no_obstacle_rollout_path = fullfile('outputs', ...
+    'LoG_GP_FirstLevel_Rollout_NoObstacle_5Curves_Codex1.mat');
 cfg.cache.second_level_rollout_path = fullfile('outputs', ...
-    'LoG_GP_SecondLevel_Rollout_C_TunedHbar10_ObstaclePTCBF_VarianceHOCBF_PTCLF_5Curves_Codex1.mat');
+    'LoG_GP_SecondLevel_Rollout_ObstaclePTCBF_VarianceHOCBF_VariancePTCBF_PTCLF_5Curves_Codex1.mat');
 cfg.cache.second_level_no_obstacle_rollout_path = fullfile('outputs', ...
-    'LoG_GP_SecondLevel_Rollout_C_TunedHbar10_VarianceHOCBF_PTCLF_NoObstacle_5Curves_Codex1.mat');
+    'LoG_GP_SecondLevel_Rollout_VarianceHOCBF_VariancePTCBF_PTCLF_NoObstacle_5Curves_Codex1.mat');
 cfg.cache.third_level_rollout_path = fullfile('outputs', ...
     'LoG_GP_ThirdLevel_Rollout_G_FirstBlockWeight40_1Curve_Codex1.mat');
 cfg.cache.third_level_no_obstacle_rollout_path = fullfile('outputs', ...
@@ -92,8 +97,12 @@ cfg.obstacle.centers   = [0.485; 0.505];   % near the first-level generated wayp
 cfg.obstacle.semi_axes = [0.08; 0.12];     % doubled ellipse width and height
 cfg.obstacle.phi0       = 2.0;            % h>=0 时的普通 CBF 系数
 cfg.obstacle.phi1_omega = 4.0;            % h<0 时 blow-up phi1=omega/(1-t)^2, 需 >2
-cfg.obstacle.slack_enabled = false;      
+cfg.obstacle.slack_enabled = false;
 cfg.obstacle.slack_weight  = 100;
+% 作用点落到椭圆正中心时 grad = 2*Q*(p-c) 退化为 0，CBF 行没有一阶方向。
+% 此时改用一条"沿短轴逃逸"的替代行(见 obstacle_cbf_info)，这里给它的
+% 速度。留空 = 自适应取该障碍的短半轴 min(a,b)，即一个时间单位走出椭圆。
+cfg.obstacle.escape_speed = [];
 
 %% Variance Constraint
 cfg.variance_constraint.grad_tol = 1e-6;
@@ -115,30 +124,35 @@ cfg.variance_constraint.first_level_hocbf_alpha2 = 3.0;
 cfg.variance_constraint.first_level_hocbf_relaxation_bound = 5;
 cfg.variance_constraint.first_level_psi1_margin = 2;
 cfg.variance_constraint.first_level_diagnostics = true;
-cfg.variance_constraint.first_level_ptcbf_enabled = false;
-cfg.variance_constraint.first_level_terminal_variance_beta_final = 50;
+cfg.variance_constraint.first_level_ptcbf_enabled = true;
+cfg.variance_constraint.first_level_terminal_variance_beta_final = 12;
 cfg.variance_constraint.first_level_terminal_variance_ptzf_initial_margin = 5;
-cfg.variance_constraint.first_level_terminal_variance_ptzf_gamma = 0.03;
-cfg.variance_constraint.first_level_terminal_variance_alpha = 2;
+cfg.variance_constraint.first_level_terminal_variance_ptzf_gamma = 0.3;
+cfg.variance_constraint.first_level_terminal_variance_alpha = 8.0;
 cfg.variance_constraint.first_level_ptclf_enabled = false;
+% Solver backend by level: the first two levels retain MATLAB quadprog,
+% while the third-level sequential cascade uses the small-row closed-form
+% active-set solver whenever that path is available.
+cfg.variance_constraint.first_level_closed_form_solver_enabled = false;
 cfg.variance_constraint.first_level_hocbf_slack_enabled = false;
 cfg.variance_constraint.first_level_terminal_variance_slack_enabled = false;
 % 前期(t<switch) variance 硬、避障软；后期(t>=switch) variance 软、避障硬
 % (导师方案，实验③)。hocbf 前硬后软，obstacle 前软后硬。
 cfg.variance_constraint.first_level_slack_switch_time = 0.65;
 % Second-level experiment C: obstacle PTCBF + variance HOCBF + PTCLF.
-cfg.variance_constraint.second_level_integral_uncertainty_budget = 0.5;
+cfg.variance_constraint.second_level_integral_uncertainty_budget = 5;
 cfg.variance_constraint.second_level_hocbf_enabled = true;
 cfg.variance_constraint.second_level_hocbf_alpha2 = 0.5;
 cfg.variance_constraint.second_level_hocbf_relaxation_bound = 8;
 cfg.variance_constraint.second_level_psi1_margin = 80;
 cfg.variance_constraint.second_level_diagnostics = true;
-cfg.variance_constraint.second_level_ptcbf_enabled = false;
+cfg.variance_constraint.second_level_ptcbf_enabled = true;
 cfg.variance_constraint.second_level_terminal_variance_beta_final = 5.0;
 cfg.variance_constraint.second_level_terminal_variance_ptzf_initial_margin = 1;
 cfg.variance_constraint.second_level_terminal_variance_ptzf_gamma = 0.2;
 cfg.variance_constraint.second_level_terminal_variance_alpha = 2.0;
 cfg.variance_constraint.second_level_ptclf_enabled = true;
+cfg.variance_constraint.second_level_closed_form_solver_enabled = false;
 cfg.variance_constraint.second_level_anchor_clf_ptzf_enabled = true;
 cfg.variance_constraint.second_level_anchor_clf_ptzf_cg = 2.0;
 cfg.variance_constraint.second_level_anchor_clf_cpt = 150;
@@ -158,7 +172,7 @@ cfg.variance_constraint.second_level_obstacle_slack_enabled = true;
 cfg.variance_constraint.second_level_obstacle_activation_time = 0.30;
 cfg.variance_constraint.second_level_obstacle_slack_hard_after_time = 0.65;
 cfg.variance_constraint.second_level_hocbf_slack_weight = 66.8;
-cfg.variance_constraint.second_level_terminal_variance_slack_weight = 66.8;
+cfg.variance_constraint.second_level_terminal_variance_slack_weight = 100;
 cfg.variance_constraint.second_level_anchor_clf_slack_weight = 30;
 cfg.variance_constraint.second_level_anchor_snap_flow_steps = 5;
 cfg.variance_constraint.second_level_anchor_snap_position_only = false;
@@ -171,7 +185,10 @@ cfg.variance_constraint.third_level_hocbf_enabled = true;
 cfg.variance_constraint.third_level_hocbf_alpha2 = 0.001;
 cfg.variance_constraint.third_level_hocbf_relaxation_bound = 5;
 cfg.variance_constraint.third_level_psi1_margin = 2;
-cfg.variance_constraint.third_level_diagnostics = true;
+% Full RK4 sub-stage trace switch. false skips the expensive 4-per-step
+% diagnostic aggregation and all plots/animations that require those traces;
+% the rollout path and final-state post-processing are still produced.
+cfg.variance_constraint.third_level_diagnostics = false;
 cfg.variance_constraint.third_level_ptcbf_enabled = true;
 cfg.variance_constraint.third_level_terminal_variance_ptcbf_end_time = 0.85;
 cfg.variance_constraint.third_level_terminal_variance_beta_final = 5;
@@ -182,10 +199,11 @@ cfg.variance_constraint.third_level_terminal_variance_alpha = 9.0;
 % all increment blocks. The internal obstacle PTCBF then uses that control
 % as its reference without imposing the P5 PTCLF row a second time.
 cfg.variance_constraint.third_level_ptclf_enabled = true;
+cfg.variance_constraint.third_level_closed_form_solver_enabled = true;
 cfg.variance_constraint.third_level_sequential_increment_qp_enabled = true;
 cfg.variance_constraint.third_level_sequential_ptclf_reference_enabled = true;
 cfg.variance_constraint.third_level_first_block_control_weight = 40;
-cfg.variance_constraint.third_level_sequential_ptclf_reference_impl_version = 6;
+cfg.variance_constraint.third_level_sequential_ptclf_reference_impl_version = 7;
 cfg.variance_constraint.third_level_hocbf_filter_end_time = 0.85;
 cfg.variance_constraint.third_level_anchor_clf_ptzf_enabled = true;
 cfg.variance_constraint.third_level_anchor_clf_ptzf_cg = 1.3;

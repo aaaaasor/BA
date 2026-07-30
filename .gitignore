@@ -3,3 +3,10 @@ python/.matplotlib/
 python/outputs/
 python/python/
 matlab/outputs/
+outputs/
+tmp/
+.matlab_prefs/
+matlab_pref_*/
+*.asv
+node_modules/
+tmp_*.txt
