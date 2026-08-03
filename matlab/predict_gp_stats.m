@@ -1,7 +1,8 @@
 % 对所有输出维度做 GP 预测，汇总均值、方差及方差梯度
 function stats = predict_gp_stats(model, gp_input)
 call_timer = tic;
-y_dim = numel(model.output_models);
+output_models = model.output_models;
+y_dim = numel(output_models);
 mu = zeros(y_dim, 1);
 variance_set = zeros(y_dim, 1); % 每个输出维度的预测方差
 grad_set = zeros(y_dim, numel(gp_input));
@@ -9,7 +10,7 @@ n_local_gp_this_call = 0; % 这次查询在所有输出维度上一共激活了�
 % 对每一个输出维度单独预测
 for output_idx = 1:y_dim
     [mu_now, variance_now, grad_now, n_local_gp_now] = ...
-        model.output_models{output_idx}.predict_variance_grad(gp_input);
+        output_models{output_idx}.predict_variance_grad(gp_input);
     mu(output_idx) = mu_now;
     variance_set(output_idx) = variance_now;
     grad_set(output_idx, :) = grad_now;

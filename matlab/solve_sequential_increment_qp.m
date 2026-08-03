@@ -182,10 +182,26 @@ if ~isempty(obstacle_rows)
 		stats_filter = stats;
 		stats_filter.mu = reshape(stats.mu(filter_cols), 1, []) + ...
 			reshape(u_ptclf_reference(filter_cols), 1, []);
+		% 首块加权(避障级)。与 PTCLF 级同样的道理: increment 表示下
+		% point m 的位置是前 m 个 block 的累加，所以避障行在 block1 上的
+		% 梯度是其它块的约 45 倍(实测 b1≈24~25 vs b2~b4≈0.53~0.57)。
+		% 最小范数按 a^2/w^2 分配工作量，w=1 时 block1 的性价比是其它块的
+		% 45^2≈2025 倍 -> 修正几乎全压在 u1 上，表现为"整段平移"。
+		% 取 w≈45 可使各块工作量大致均衡；默认 1.0 保持原行为。
+		% 注意: 这里的控制向量只覆盖 filter_cols，权重向量必须同长度；
+		% endpoint_hold 激活时 filter_cols 本就不含 block1，无需加权。
+		obstacle_constraint_cfg = local_constraint_cfg;
+		obstacle_first_block_weight = struct_field_default(constraint_cfg, ...
+			'obstacle_first_block_control_weight', 1.0);
+		if obstacle_first_block_weight ~= 1.0 && ~endpoint_hold_active
+			obstacle_control_weight = ones(numel(filter_cols), 1);
+			obstacle_control_weight(1:block_dim) = obstacle_first_block_weight;
+			obstacle_constraint_cfg.control_weight = obstacle_control_weight;
+		end
 		[u_filter, exitflag_filter, slack_filter, ~, ...
 			iterations_filter, seconds_filter, contributions_filter] = ...
 			solve_slack_qp(A_filter, b_filter, types_all(filter_rows), ...
-			local_constraint_cfg, t, stats_filter, terminal_info, ...
+			obstacle_constraint_cfg, t, stats_filter, terminal_info, ...
 			integral_residual_without_u, terminal_residual_without_u);
 		if numel(u_filter) ~= numel(filter_cols)
 			error(['Internal PTCBF filter returned %d controls for %d ', ...

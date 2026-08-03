@@ -29,6 +29,7 @@ classdef LoG_GP_MultiOutput < handle
 		ActivatedNodeQuantity
 		ActivatedGPQuantity;
 		Node_GP_Map;
+		Node_LocalGP_Map = [];
 
 		RootModel;
 		children;
@@ -84,6 +85,7 @@ classdef LoG_GP_MultiOutput < handle
 			obj.ActivatedNodeQuantity = 1;
 			obj.Node_GP_Map = nan(obj.Max_LocalGP_Quantity,1);
 			obj.Node_GP_Map(1) = 1;
+			obj.Node_LocalGP_Map = 1;
 
 			obj.HyperplaneDimension = nan(2 * obj.Max_LocalGP_Quantity - 1,1);
 			obj.HyperplaneMean = nan(2 * obj.Max_LocalGP_Quantity - 1,1);
@@ -105,6 +107,7 @@ classdef LoG_GP_MultiOutput < handle
 			obj.LengthScaleTimeScaleStart = start_scale;
 			obj.LengthScaleTimeScaleEnd = end_scale;
 			for i = 1:obj.Max_LocalGP_Quantity
+				obj.LocalGP_set{i}.invalidate_prediction_cache();
 				obj.LocalGP_set{i}.LengthScaleTimeVarying = enabled;
 				obj.LocalGP_set{i}.LengthScaleTimeScaleStart = start_scale;
 				obj.LocalGP_set{i}.LengthScaleTimeScaleEnd = end_scale;
@@ -188,6 +191,7 @@ classdef LoG_GP_MultiOutput < handle
 			obj.DataQuantity = obj.DataQuantity - DeleteDataQuantity;
 
 			obj.Node_GP_Map(Unused_LocalGPNr) = nan;
+			obj.Node_LocalGP_Map = [];
 			obj.LocalGP_set{Unused_LocalGPNr}.resetGP;
 			new_ActivatedGPNr = rmmissing(obj.ActivatedGPNr);
 			new_ActivatedGPNr(new_ActivatedGPNr == Unused_LocalGPNr) = nan;
@@ -269,6 +273,7 @@ classdef LoG_GP_MultiOutput < handle
 			%
 			obj.Node_GP_Map(LocalGPNr) = new_ActivadteNodeNr(1);
 			obj.Node_GP_Map(Extend_LocalGPNr) = new_ActivadteNodeNr(2);
+			obj.Node_LocalGP_Map = [];
 			%
 			obj.children(NodeNr,1) = new_ActivadteNodeNr(1);
 			obj.children(NodeNr,2) = new_ActivadteNodeNr(2);
@@ -411,7 +416,7 @@ classdef LoG_GP_MultiOutput < handle
 			p_set = moP(:,2);
 			for i=1:mCount
 				NodeNr = moP(i,1);
-				LocalGPNr = obj.Node_GP_Map == NodeNr;
+				LocalGPNr = obj.local_gp_index(NodeNr);
 				% Note before prediction, update the delta of activated local GP
 				obj.LocalGP_set{LocalGPNr}.delta = obj.delta / mCount;
 				[mu_m,var_m,eta_m,beta_m,gamma_m,eta_max_m,eta_pre_m] = obj.LocalGP_set{LocalGPNr}.predict(x);
@@ -482,7 +487,7 @@ classdef LoG_GP_MultiOutput < handle
 			mu = zeros(obj.y_dim,1);
 			for i=1:mCount
 				NodeNr = moP(i,1);
-				LocalGPNr = obj.Node_GP_Map == NodeNr;
+				LocalGPNr = obj.local_gp_index(NodeNr);
 				local_gp = obj.LocalGP_set{LocalGPNr};
 				switch obj.AggregationMethod
 					case 'MOE'
@@ -544,7 +549,7 @@ classdef LoG_GP_MultiOutput < handle
 			grad_set = zeros(mCount,obj.x_dim);
 			for i = 1:mCount
 				NodeNr    = moP(i,1);
-				LocalGPNr = obj.Node_GP_Map == NodeNr;
+				LocalGPNr = obj.local_gp_index(NodeNr);
 				[mu_m,var_m,grad_m] = obj.LocalGP_set{LocalGPNr}.predict_variance_grad(x);
 				mu_set(:,i)  = mu_m;
 				var_set(i)   = max(var_m, eps);
@@ -563,6 +568,15 @@ classdef LoG_GP_MultiOutput < handle
 					grad = p_set' * grad_set;
 			end
 			n_local_gp = mCount;
+		end
+		function local_gp_idx = local_gp_index(obj, node_nr)
+			if isempty(obj.Node_LocalGP_Map)
+				node_map = zeros(size(obj.children, 1), 1);
+				active_gp = find(isfinite(obj.Node_GP_Map));
+				node_map(obj.Node_GP_Map(active_gp)) = active_gp;
+				obj.Node_LocalGP_Map = node_map;
+			end
+			local_gp_idx = obj.Node_LocalGP_Map(node_nr);
 		end
 	end
 end

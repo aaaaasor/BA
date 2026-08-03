@@ -1,10 +1,41 @@
 function plot_sigma_vs_time(cfg, traj_times, uncertainty_values, level_label, ...
-    rollout_diagnostics)
-if nargin < 5
-    rollout_diagnostics = [];
+    ~, signal_std_vec)
+if nargin < 6 || isempty(signal_std_vec)
+    error('plot_sigma_vs_time:MissingPriorScale', ...
+        'signal_std_vec is required for dimensionless OOD evaluation.');
 end
-beta_by_sample = aggregate_variance_values(uncertainty_values);
-sigma_by_sample = sqrt(beta_by_sample);
+
+n_outputs = size(uncertainty_values, 3);
+signal_std_vec = signal_std_vec(:);
+if numel(signal_std_vec) ~= n_outputs
+    error('plot_sigma_vs_time:PriorScaleSizeMismatch', ...
+        'Expected %d GP signal standard deviations, received %d.', ...
+        n_outputs, numel(signal_std_vec));
+end
+prior_variance = reshape(max(signal_std_vec .^ 2, eps), 1, 1, []);
+normalized_variance = uncertainty_values ./ prior_variance;
+sigma_by_sample = sqrt(aggregate_variance_values( ...
+    normalized_variance) ./ n_outputs);
+
+ood_threshold = struct_field_default(cfg.variance_constraint, ...
+    'ood_normalized_sigma_threshold', 0.8);
+ood_quantile = struct_field_default(cfg.variance_constraint, ...
+    'ood_quantile', 0.95);
+if ~(isscalar(ood_threshold) && isfinite(ood_threshold) && ...
+        ood_threshold > 0)
+    error('plot_sigma_vs_time:InvalidOODThreshold', ...
+        'OOD normalized-sigma threshold must be a positive finite scalar.');
+end
+if ~(isscalar(ood_quantile) && isfinite(ood_quantile) && ...
+        ood_quantile > 0 && ood_quantile <= 1)
+    error('plot_sigma_vs_time:InvalidOODQuantile', ...
+        'OOD quantile must lie in (0, 1].');
+end
+ood_score = prctile(sigma_by_sample(:), 100 * ood_quantile);
+is_ood = ood_score > ood_threshold;
+fprintf(['%s normalized OOD score (q=%.3g): %.4f; threshold %.4f; ', ...
+    'classification: %s\n'], level_label, ood_quantile, ood_score, ...
+    ood_threshold, string(classification_label(is_ood)));
 
 fig = figure('Color', 'w', 'WindowStyle', 'normal', ...
     'Units', 'normalized', 'Position', [0.14, 0.18, 0.60, 0.46]);
@@ -16,32 +47,12 @@ for sample_idx = 1:size(sigma_by_sample, 2)
         'HandleVisibility', 'off');
 end
 plot(nan, nan, '-', 'Color', [0.20, 0.45, 0.85], ...
-    'LineWidth', 1.2, 'DisplayName', 'actual sqrt(beta)');
-if ~isempty(rollout_diagnostics) && isfield(rollout_diagnostics, 'hocbf')
-    trace = rollout_diagnostics.hocbf;
-    has_terminal_cap = isfield(trace, 'trace_terminal_beta_cap') && ...
-        ~isempty(trace.trace_terminal_beta_cap) && ...
-        any(isfinite(trace.trace_terminal_beta_cap));
-    if has_terminal_cap
-        terminal_t = trace.trace_t(:);
-        terminal_sigma_cap = sqrt(max(trace.trace_terminal_beta_cap(:), 0.0));
-        rows_now = isfinite(terminal_sigma_cap) & isfinite(terminal_t);
-        if any(rows_now)
-            [t_unique, ~, group_idx] = unique(terminal_t(rows_now));
-            cap_line = accumarray(group_idx, terminal_sigma_cap(rows_now), ...
-                [], @max);
-            [t_unique, sort_idx] = sort(t_unique);
-            cap_line = cap_line(sort_idx);
-            plot(t_unique, cap_line, '--', 'Color', [0.85, 0.20, 0.20], ...
-                'LineWidth', 1.4, 'DisplayName', ...
-                'PTCBF cap sqrt(beta final + hbar)');
-        end
-    end
-end
+    'LineWidth', 1.2, 'DisplayName', ...
+    'normalized RMS GP uncertainty');
 grid on;
 xlabel('s');
-ylabel('\sigma(s)');
-title([level_label, ': GP predictive \sigma along rollout']);
+ylabel('sqrt(mean_i(\sigma_i^2 / \Sigma_{F,i}^2))');
+title(sprintf('%s: normalized GP uncertainty', level_label));
 legend('Location', 'best', 'Interpreter', 'none');
 
 if cfg.output.enabled
@@ -51,5 +62,13 @@ if cfg.output.enabled
     output_path = fullfile(output_dir, ...
         ['trajectory_gp_sigma_vs_time_', strrep(level_label, ' ', '_'), '_matlab.emf']);
     export_graphics_compat(fig, output_path);
+end
+end
+
+function label = classification_label(is_ood)
+if is_ood
+    label = 'OOD';
+else
+    label = 'in-distribution';
 end
 end

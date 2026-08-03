@@ -26,6 +26,8 @@ path(1, :, :) = x_init; % 保存初始状态
 constrained = ~isempty(constraint_cfg);
 collect_diagnostics = constrained && struct_field_default( ...
 	constraint_cfg, 'diagnostics', false);
+collect_control_trace = constrained && struct_field_default( ...
+	constraint_cfg, 'control_trace_enabled', false);
 if constrained
 	% rollout 实际只能跑到 t1(<1，PTZF公式在t=1处有奇点），把这个映射
 	% 偏移量传给 terminal/CLF，让它们在 t=t1 时把 t_eff 当作精确的 1。
@@ -34,6 +36,10 @@ end
 if collect_diagnostics
 	trace_capacity = 4 * n_samples * n_steps;
 	diagnostics.hocbf = init_hocbf_diagnostics( ...
+		trace_capacity, state_dim);
+elseif collect_control_trace
+	trace_capacity = 4 * n_samples * n_steps;
+	diagnostics.hocbf = init_control_trace_diagnostics( ...
 		trace_capacity, state_dim);
 else
 	diagnostics.hocbf = init_hocbf_diagnostics();
@@ -76,6 +82,10 @@ for sample_idx = 1:n_samples
 		end
 		if struct_field_default(constraint_cfg, 'ptclf_enabled', false) && ...
 				isfield(constraint_cfg, 'anchor_clf_target')
+			% 包络式 PTCLF 需要按 sample 的初值 gbar0；SafeFlow 形式没有
+			% 包络(收敛只靠 phi1 的发散性，与初值无关)，只打印 V0 供诊断。
+			clf_is_envelope = ~strcmpi(struct_field_default(constraint_cfg, ...
+				'anchor_clf_form', 'envelope'), 'safeflow');
 			clf_margin = struct_field_default(constraint_cfg, ...
 				'anchor_clf_ptzf_initial_margin', 1e-6);
 			anchor_target = constraint_cfg.anchor_clf_target(:);
@@ -87,9 +97,12 @@ for sample_idx = 1:n_samples
 				anchor_indices = constraint_cfg.anchor_clf_indices(:)';
 				anchor_error0 = x_init(sample_idx, anchor_indices)' - anchor_target;
 			end
-				clf_g0 = sum(anchor_error0 .^ 2);
+			clf_v0 = sum(anchor_error0 .^ 2);
+			if ~clf_is_envelope
+				fprintf('  sample %d: anchor CLF V0=%.6g\n', sample_idx, clf_v0);
+			else
 				constraint_cfg.anchor_clf_ptzf_initial_bound = ...
-					max(clf_g0, 0.0) + clf_margin;
+					max(clf_v0, 0.0) + clf_margin;
 				if struct_field_default(constraint_cfg, ...
 						'sequential_increment_qp_enabled', false) && ...
 						isfield(constraint_cfg, 'anchor_clf_matrix')
@@ -99,8 +112,7 @@ for sample_idx = 1:n_samples
 					end
 					endpoint_dim = numel(anchor_error0) / 2;
 					first_error0 = anchor_error0(1:endpoint_dim);
-					last_error0 = anchor_error0( ...
-						endpoint_dim + (1:endpoint_dim));
+					last_error0 = anchor_error0(endpoint_dim + (1:endpoint_dim));
 					endpoint_margins = struct_field_default(constraint_cfg, ...
 						'anchor_clf_endpoint_ptzf_initial_margins', []);
 					if isempty(endpoint_margins)
@@ -112,7 +124,8 @@ for sample_idx = 1:n_samples
 								'must have two entries.']);
 						end
 					end
-					endpoint_margin_ratios = struct_field_default(constraint_cfg, ...
+					endpoint_margin_ratios = struct_field_default( ...
+						constraint_cfg, ...
 						'anchor_clf_endpoint_ptzf_initial_margin_ratios', []);
 					if isempty(endpoint_margin_ratios)
 						endpoint_margin_ratios = zeros(2, 1);
@@ -120,22 +133,20 @@ for sample_idx = 1:n_samples
 						endpoint_margin_ratios = endpoint_margin_ratios(:);
 						if numel(endpoint_margin_ratios) ~= 2 || ...
 								any(endpoint_margin_ratios < 0)
-							error(['anchor_clf_endpoint_ptzf_initial_margin_ratios ', ...
-								'must contain two nonnegative entries.']);
+							error(['anchor_clf_endpoint_ptzf_initial_margin', ...
+								'_ratios must contain two nonnegative entries.']);
 						end
 					end
-					first_g0 = sum(first_error0 .^ 2);
-					last_g0 = sum(last_error0 .^ 2);
 					constraint_cfg.anchor_clf_endpoint_ptzf_initial_bounds = [ ...
-						(1.0 + endpoint_margin_ratios(1)) * first_g0 + ...
-							endpoint_margins(1); ...
-						(1.0 + endpoint_margin_ratios(2)) * last_g0 + ...
-							endpoint_margins(2)];
+						(1.0 + endpoint_margin_ratios(1)) * ...
+							sum(first_error0 .^ 2) + endpoint_margins(1); ...
+						(1.0 + endpoint_margin_ratios(2)) * ...
+							sum(last_error0 .^ 2) + endpoint_margins(2)];
 				end
-			clf_g0 = constraint_cfg.anchor_clf_ptzf_initial_bound - clf_margin;
-			fprintf(['  sample %d: anchor CLF g0=%.6g, margin=%.3g, ', ...
-				'gbar0=%.6g\n'], sample_idx, clf_g0, clf_margin, ...
-				constraint_cfg.anchor_clf_ptzf_initial_bound);
+				fprintf(['  sample %d: anchor CLF g0=%.6g, margin=%.3g, ', ...
+					'gbar0=%.6g\n'], sample_idx, clf_v0, clf_margin, ...
+					constraint_cfg.anchor_clf_ptzf_initial_bound);
+			end
 		end
 		% 根据初始方差动态计算 alpha1，保证 psi_1(0) >= psi1_margin
 		beta0 = beta0_values(sample_idx); % 计算初始时刻的 GP 总预测方差
@@ -257,6 +268,9 @@ for sample_idx = 1:n_samples
 			if collect_diagnostics
 				diagnostics.hocbf = update_hocbf_diagnostics( ...
 					diagnostics.hocbf, hocbf_info, sample_idx, step_idx, 'k1');
+			elseif collect_control_trace
+				diagnostics.hocbf = update_control_trace_diagnostics( ...
+					diagnostics.hocbf, hocbf_info, sample_idx, step_idx, 'k1');
 			end
 		else
 			k1 = constrained_velocity_field(model_collection, t_now, x_now, [], 0.0, []);
@@ -270,6 +284,9 @@ for sample_idx = 1:n_samples
 			q2 = hocbf_info.sigma2;
 			if collect_diagnostics
 				diagnostics.hocbf = update_hocbf_diagnostics( ...
+					diagnostics.hocbf, hocbf_info, sample_idx, step_idx, 'k2');
+			elseif collect_control_trace
+				diagnostics.hocbf = update_control_trace_diagnostics( ...
 					diagnostics.hocbf, hocbf_info, sample_idx, step_idx, 'k2');
 			end
 		else
@@ -285,6 +302,9 @@ for sample_idx = 1:n_samples
 			if collect_diagnostics
 				diagnostics.hocbf = update_hocbf_diagnostics( ...
 					diagnostics.hocbf, hocbf_info, sample_idx, step_idx, 'k3');
+			elseif collect_control_trace
+				diagnostics.hocbf = update_control_trace_diagnostics( ...
+					diagnostics.hocbf, hocbf_info, sample_idx, step_idx, 'k3');
 			end
 		else
 			k3 = constrained_velocity_field(model_collection, t_k3, x_k3, [], 0.0, []);
@@ -298,6 +318,9 @@ for sample_idx = 1:n_samples
 			q4 = hocbf_info.sigma2;
 			if collect_diagnostics
 				diagnostics.hocbf = update_hocbf_diagnostics( ...
+					diagnostics.hocbf, hocbf_info, sample_idx, step_idx, 'k4');
+			elseif collect_control_trace
+				diagnostics.hocbf = update_control_trace_diagnostics( ...
 					diagnostics.hocbf, hocbf_info, sample_idx, step_idx, 'k4');
 			end
 		else
@@ -333,7 +356,12 @@ for sample_idx = 1:n_samples
 		batch_timer = tic;
 	end
 end
-diagnostics.hocbf = finalize_hocbf_diagnostics(diagnostics.hocbf);
+if collect_diagnostics
+	diagnostics.hocbf = finalize_hocbf_diagnostics(diagnostics.hocbf);
+elseif collect_control_trace
+	diagnostics.hocbf = finalize_control_trace_diagnostics( ...
+		diagnostics.hocbf);
+end
 diagnostics.rollout_elapsed_seconds = toc(rollout_timer);
 % 只有在开启约束，并且配置里要求输出诊断信息时，才打印 HOCBF 的诊断结果
 if collect_diagnostics

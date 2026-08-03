@@ -34,6 +34,12 @@ classdef LocalGP_MultiOutput < handle
 		Lf_set;
 		Lf;
 	end
+	properties (Access = private, Transient)
+		PredictionCacheReady = false;
+		PredictionX = [];
+		PredictionL = [];
+		PredictionAuxAlpha = [];
+	end
 	methods
 		function obj = LocalGP_MultiOutput(x_dim,y_dim,MaxDataQuantity, ...
 				SigmaN,SigmaF,SigmaL)
@@ -67,6 +73,7 @@ classdef LocalGP_MultiOutput < handle
 		end
 		%% Reset
 		function resetGP(obj)
+			obj.invalidate_prediction_cache();
 			obj.X = nan(obj.x_dim,obj.MaxDataQuantity);
 			obj.Y = nan(obj.MaxDataQuantity,obj.y_dim);
 			obj.DataQuantity = 0;
@@ -79,18 +86,24 @@ classdef LocalGP_MultiOutput < handle
 			obj.ActivateState = false;
 		end
 		%% Kernel Function
-		function kern = kernel(obj, Xi, Xj)%squared exponential kernel
+		function [kern, length_scale_sq, length_scale_i, ...
+				length_scale_j, query_delta] = kernel(obj, Xi, Xj)%squared exponential kernel
 			dx = size(Xi,1);
 			if nargin == 2
 				n = size(Xi,2);
 				d = zeros(dx,1,n);
 				[length_scale_sq, amplitude_scale] = ...
 					obj.kernel_scale_terms(Xi, []);
+				length_scale_i = [];
+				length_scale_j = [];
+				query_delta = [];
 			else
 				m = size(Xj,2);
 				d = Xi - reshape(Xj,dx,1,m);
-				[length_scale_sq, amplitude_scale] = ...
+				[length_scale_sq, amplitude_scale, length_scale_i, ...
+					length_scale_j] = ...
 					obj.kernel_scale_terms(Xi, Xj);
+				query_delta = d;
 			end
 			kern = permute((obj.SigmaF^2) .* amplitude_scale .* ...
 				exp(-0.5*sum((d.^2)./length_scale_sq,1)),[2 3 1]);
@@ -114,11 +127,14 @@ classdef LocalGP_MultiOutput < handle
 			dscale_dt(:) = obj.LengthScaleTimeScaleEnd - obj.LengthScaleTimeScaleStart;
 		end
 		%% 新增 kernel_scale_terms
-		function [length_scale_sq, amplitude_scale] = kernel_scale_terms(obj, Xi, Xj)
+		function [length_scale_sq, amplitude_scale, length_scale_i, ...
+				length_scale_j] = kernel_scale_terms(obj, Xi, Xj)
 			base_length_scale = reshape(obj.SigmaL, [], 1, 1);
 			if ~obj.LengthScaleTimeVarying
 				length_scale_sq = base_length_scale .^ 2;
 				amplitude_scale = 1.0;
+				length_scale_i = base_length_scale;
+				length_scale_j = base_length_scale;
 				return;
 			end
 			if isempty(Xj)
@@ -145,26 +161,32 @@ classdef LocalGP_MultiOutput < handle
 			length_scale_sq = (obj.SigmaL(:) .* scale) .^ 2;
 		end
 		%% 计算 kernel 对 query point x 的梯度
-		function dk_dquery = kernel_query_gradient(obj, X_set, x, Ktx_now)
-			diff = x' - X_set';
+		function dk_dquery = kernel_query_gradient(obj, X_set, x, Ktx_now, ...
+				length_scale_sq, ell_train, ell_query, query_delta)
 			if ~obj.LengthScaleTimeVarying
+				diff = x' - X_set';
 				length_scale_sq = obj.SigmaL(:) .^ 2;
 				dk_dquery = -(diff ./ length_scale_sq') .* Ktx_now;
 				return;
 			end
 
-			[length_scale_sq, ~] = obj.kernel_scale_terms(X_set, x);
+			if nargin < 5 || isempty(length_scale_sq)
+				[length_scale_sq, ~, ell_train, ell_query] = ...
+					obj.kernel_scale_terms(X_set, x);
+			end
 			length_scale_sq = reshape(length_scale_sq, obj.x_dim, []);
-			dX = X_set - reshape(x, [], 1);
+			if nargin < 8 || isempty(query_delta)
+				dX = X_set - reshape(x, [], 1);
+			else
+				dX = reshape(query_delta, obj.x_dim, []);
+			end
 			k_row = reshape(Ktx_now, 1, []);
 			dk_by_dim = (dX ./ length_scale_sq) .* k_row;
 
 			base_length_scale = obj.SigmaL(:);
-			scale_train = obj.length_scale_time_scale(reshape(X_set(1,:), 1, []));
-			scale_query = obj.length_scale_time_scale(x(1));
 			dscale_query = obj.length_scale_time_scale_derivative(x(1));
-			ell_train = base_length_scale .* scale_train;
-			ell_query = base_length_scale .* scale_query;
+			ell_train = reshape(ell_train, obj.x_dim, []);
+			ell_query = reshape(ell_query, obj.x_dim, []);
 			dell_query_dt = base_length_scale .* dscale_query;
 			length_scale_sum_sq = ell_train .^ 2 + ell_query .^ 2;
 			d_length_scale_sq_dt = ell_query .* dell_query_dt;
@@ -199,6 +221,7 @@ classdef LocalGP_MultiOutput < handle
 		end
 		%% Update Parameter
 		function updateParam(obj)
+			obj.invalidate_prediction_cache();
 			LocalGP_DataQuantity = obj.DataQuantity;
 			X_set = obj.X(:,1:LocalGP_DataQuantity);
 			if obj.DataQuantity == 1 %first point in model
@@ -252,6 +275,7 @@ classdef LocalGP_MultiOutput < handle
 		end
 		%% downdate parameter
 		function downdateParam(obj,DeleteNr)
+			obj.invalidate_prediction_cache();
 			LocalGP_DataQuantity = obj.DataQuantity;
 			if LocalGP_DataQuantity == 0
 				return;
@@ -317,6 +341,7 @@ classdef LocalGP_MultiOutput < handle
 		end
 		%% Update the parameter for all the data
 		function updateParam_Alldata(obj)
+			obj.invalidate_prediction_cache();
 			LocalGP_DataQuantity = obj.DataQuantity;
 			X_set = obj.X(:,1:LocalGP_DataQuantity);
 			for i = 1:obj.y_dim
@@ -347,7 +372,9 @@ classdef LocalGP_MultiOutput < handle
 				temp_L = obj.L(1:LocalGP_DataQuantity,1:LocalGP_DataQuantity);
 				Ktx_now = obj.kernel(X_set, x);
 				v_now = temp_L \ Ktx_now;
-				var = obj.kernel(x) - v_now'*v_now;
+				% k(x,x) is exactly SigmaF^2 for this kernel, including the
+				% time-varying length-scale form (its self-amplitude is one).
+				var = obj.SigmaF ^ 2 - v_now'*v_now;
 				if var < 0
 					var = 0;
 				end
@@ -378,7 +405,7 @@ classdef LocalGP_MultiOutput < handle
 			temp_L_now = obj.L(1:LocalGP_DataQuantity,1:LocalGP_DataQuantity);
 			Ktx_now = obj.kernel(X_set, x);
 			v_now = temp_L_now \ Ktx_now;
-			var = obj.kernel(x) - v_now' * v_now;
+			var = obj.SigmaF ^ 2 - v_now' * v_now;
 			if var < 0
 				var = 0;
 			end
@@ -394,20 +421,38 @@ classdef LocalGP_MultiOutput < handle
 				return;
 			end
 
-			X_set = obj.X(:,1:LocalGP_DataQuantity);
-			temp_L_now = obj.L(1:LocalGP_DataQuantity,1:LocalGP_DataQuantity);
-			Ktx_now = obj.kernel(X_set, x);
+			if ~obj.PredictionCacheReady
+				obj.prepare_prediction_cache();
+			end
+			X_set = obj.PredictionX;
+			temp_L_now = obj.PredictionL;
+			[Ktx_now, length_scale_sq, ell_train, ell_query, query_delta] = ...
+				obj.kernel(X_set, x);
 			v_now = temp_L_now \ Ktx_now;
 			weights_now = temp_L_now' \ v_now;
-			mu = obj.aux_alpha(1:LocalGP_DataQuantity,:)' * v_now;
-			var = obj.kernel(x) - v_now' * v_now;
+			mu = obj.PredictionAuxAlpha' * v_now;
+			var = obj.SigmaF ^ 2 - v_now' * v_now;
 			if var < 0
 				var = 0;
 			end
 
-			dk_dx = obj.kernel_query_gradient(X_set, x, Ktx_now);
+			dk_dx = obj.kernel_query_gradient(X_set, x, Ktx_now, ...
+				length_scale_sq, ell_train, ell_query, query_delta);
 			grad = -2.0 * sum(dk_dx .* weights_now, 1);
 
+		end
+		function invalidate_prediction_cache(obj)
+			obj.PredictionCacheReady = false;
+			obj.PredictionX = [];
+			obj.PredictionL = [];
+			obj.PredictionAuxAlpha = [];
+		end
+		function prepare_prediction_cache(obj)
+			n = obj.DataQuantity;
+			obj.PredictionX = obj.X(:, 1:n);
+			obj.PredictionL = obj.L(1:n, 1:n);
+			obj.PredictionAuxAlpha = obj.aux_alpha(1:n, :);
+			obj.PredictionCacheReady = true;
 		end
 		%% Error Bound
 		function [beta,gamma] = set_ErrorBound(obj,x)

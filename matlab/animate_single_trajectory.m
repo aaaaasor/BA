@@ -48,7 +48,29 @@ movegui(fig, 'center');
 ax = axes(fig);
 set(ax, 'Position', [0.10, 0.12, 0.62, 0.76]);
 hold(ax, 'on');
-h_source = plot(ax, source_points_xy(:, 1), source_points_xy(:, 2), '--', ...
+source_plot_xy = source_points_xy;
+break_source_segments = struct_field_default(cfg.animation, ...
+    'break_source_segments', true);
+if use_segment_plot && break_source_segments
+    n_source_segments = cfg.animation.segment_plot_count;
+    n_source_points = cfg.animation.segment_plot_points_per_segment;
+    if n_source_segments > 1 && ...
+            size(source_points_xy, 1) == n_source_segments * n_source_points
+        % Each source segment is sampled independently.  Insert NaN rows so
+        % MATLAB does not draw artificial links between adjacent segments.
+        source_plot_xy = nan(size(source_points_xy, 1) + ...
+            n_source_segments - 1, 2);
+        for segment_idx = 1:n_source_segments
+            input_start = (segment_idx - 1) * n_source_points + 1;
+            input_end = input_start + n_source_points - 1;
+            output_start = (segment_idx - 1) * (n_source_points + 1) + 1;
+            output_end = output_start + n_source_points - 1;
+            source_plot_xy(output_start:output_end, :) = ...
+                source_points_xy(input_start:input_end, :);
+        end
+    end
+end
+h_source = plot(ax, source_plot_xy(:, 1), source_plot_xy(:, 2), '--', ...
     'Color', [0.45, 0.45, 0.45], 'LineWidth', 1.1, 'DisplayName', 'source');
 h_rollout = plot(ax, nan, nan, '.-', ...
     'Color', [0.10, 0.35, 0.90], 'LineWidth', 1.8, ...
