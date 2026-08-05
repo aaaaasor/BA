@@ -192,6 +192,7 @@ level_constraint.obstacle_points = struct_field_default( ...
 if level_constraint.obstacle_enabled
 	level_constraint.obstacle_centers = cfg.obstacle.centers;
 	level_constraint.obstacle_semi_axes = cfg.obstacle.semi_axes;
+	level_constraint.obstacle_geometry = cfg.obstacle;
 	% phi0/phi1_omega/slack_weight 默认继承 cfg.obstacle（三层共用），
 	% 但允许按层用 [level_prefix, '_obstacle_phi0'] 等字段单独覆盖，
 	% 不写就跟以前一样三层共用同一个值。

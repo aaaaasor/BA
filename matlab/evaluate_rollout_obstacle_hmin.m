@@ -13,6 +13,11 @@ end
 
 centers = constraint_cfg.obstacle_centers;
 semi_axes = constraint_cfg.obstacle_semi_axes;
+if isfield(constraint_cfg, 'obstacle_geometry')
+	obstacle_geometry = constraint_cfg.obstacle_geometry;
+else
+	obstacle_geometry = struct('centers', centers, 'semi_axes', semi_axes);
+end
 if size(centers, 1) ~= 2
 	centers = centers';
 end
@@ -41,12 +46,32 @@ for map_idx = 1:numel(point_maps)
 	end
 	positions = point_map.M * state_columns + point_map.o(:);
 	for obstacle_idx = 1:size(centers, 2)
-		delta = (positions - centers(:, obstacle_idx)) ./ ...
-			semi_axes(:, obstacle_idx);
-		h_now = reshape(sum(delta .^ 2, 1) - 1.0, ...
+		angle = geometry_value(obstacle_geometry, 'angles', obstacle_idx, 0.0);
+		exponent = geometry_value(obstacle_geometry, 'exponents', obstacle_idx, 2.0);
+		rotation = [cos(angle), -sin(angle); sin(angle), cos(angle)];
+		delta_local = rotation' * ...
+			(positions - centers(:, obstacle_idx));
+		scaled = delta_local ./ semi_axes(:, obstacle_idx);
+		power_sum = sum(abs(scaled) .^ exponent, 1);
+		if exponent > 2
+			level_values = power_sum .^ (1 / exponent) - 1.0;
+		else
+			level_values = power_sum - 1.0;
+		end
+		h_now = reshape(level_values, ...
 			n_times, n_samples);
 		h_min = min(h_min, h_now);
 	end
+end
+end
+
+function value = geometry_value(geometry, field_name, obstacle_idx, default_value)
+if ~isfield(geometry, field_name) || isempty(geometry.(field_name))
+	value = default_value;
+elseif isscalar(geometry.(field_name))
+	value = geometry.(field_name);
+else
+	value = geometry.(field_name)(obstacle_idx);
 end
 end
 

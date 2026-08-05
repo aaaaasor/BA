@@ -296,11 +296,9 @@ function draw_obstacles_on_axes(ax, obstacle)
 if isempty(obstacle) || ~isfield(obstacle, 'enabled') || ~obstacle.enabled
 	return;
 end
-theta = linspace(0, 2 * pi, 200);
 for obstacle_idx = 1:size(obstacle.centers, 2)
-	center = obstacle.centers(:, obstacle_idx);
-	fill(ax, center(1) + obstacle.semi_axes(1, obstacle_idx) * cos(theta), ...
-		center(2) + obstacle.semi_axes(2, obstacle_idx) * sin(theta), ...
+	xy = obstacle_outline_points(obstacle, obstacle_idx);
+	fill(ax, xy(:, 1), xy(:, 2), ...
 		[0.82 0.82 0.82], 'EdgeColor', [0.35 0.35 0.35], ...
 		'FaceAlpha', 0.6, 'LineWidth', 1.0, 'HandleVisibility', 'off');
 end

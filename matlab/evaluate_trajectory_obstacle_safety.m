@@ -51,38 +51,17 @@ end
 function hmin = local_point_min_h(p, obstacle)
 hmin = inf;
 for j = 1:size(obstacle.centers, 2)
-    c = obstacle.centers(:, j);
-    a = obstacle.semi_axes(1, j);
-    b = obstacle.semi_axes(2, j);
-    d = p - c;
-    hmin = min(hmin, (d(1) / a)^2 + (d(2) / b)^2 - 1);
+    hmin = min(hmin, obstacle_level_and_gradient(p, obstacle, j));
 end
 end
 
 function hmin = local_segment_min_h(pa, pb, obstacle)
+% Minimize the shared rotated-superellipse level set along each line segment.
 % 每个椭圆: h(s) = d(s)'Q d(s) - 1, d(s) = pa + s(pb-pa) - c, s in [0,1]。
 % 二次: h(s) = A s^2 + B s + C, 极小在顶点 s*=-B/(2A)(裁剪[0,1])或端点。
 hmin = inf;
 for j = 1:size(obstacle.centers, 2)
-    c = obstacle.centers(:, j);
-    a = obstacle.semi_axes(1, j);
-    b = obstacle.semi_axes(2, j);
-    Q = diag([1 / a^2, 1 / b^2]);
-    d0 = pa - c;
-    dd = pb - pa;
-    A = dd' * Q * dd;
-    B = 2 * (d0' * Q * dd);
-    C = d0' * Q * d0 - 1;
-    cand = [0; 1];
-    if A > eps
-        s_star = -B / (2 * A);
-        if s_star > 0 && s_star < 1
-            cand(end + 1) = s_star; %#ok<AGROW>
-        end
-    end
-    for k = 1:numel(cand)
-        s = cand(k);
-        hmin = min(hmin, A * s^2 + B * s + C);
-    end
+    [~, segment_h] = closest_obstacle_point_on_segment(pa, pb, obstacle, j);
+    hmin = min(hmin, segment_h);
 end
 end

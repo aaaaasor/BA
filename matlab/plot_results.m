@@ -6,7 +6,13 @@ output_dir = fullfile(this_dir, 'outputs');
 if cfg.output.enabled && ~exist(output_dir, 'dir')
     mkdir(output_dir);
 end
-output_path = fullfile(output_dir, 'gp_flow_matching_demo_matlab.emf');
+if strcmpi(struct_field_default(cfg, 'scenario', ''), 'racing') && ...
+        struct_field_default(cfg, 'enable_third_level', false)
+    output_filename = 'Racing_ThirdLevel_ThreePanel.emf';
+else
+    output_filename = 'gp_flow_matching_demo_matlab.emf';
+end
+output_path = fullfile(output_dir, output_filename);
 
 fig = figure('Color', 'w', 'WindowStyle', 'normal', ...
     'Units', 'normalized', 'Position', [0.08, 0.18, 0.84, 0.48]);
@@ -43,6 +49,12 @@ if use_segment_plot
     rollout_xy = [rollout_xy; reshape(seg_xy, [], 2)];
 end
 comparison_xy = [target_xy; rollout_xy];
+% 赛车场景下把赛道边界也纳入范围计算：走廊在弯道外侧比轨迹更宽，只按轨迹
+% 定范围会把赛道边缘切掉。
+if isfield(cfg, 'track_segment') && ~isempty(cfg.track_segment)
+    comparison_xy = [comparison_xy; cfg.track_segment.left; ...
+        cfg.track_segment.right];
+end
 comparison_xy = comparison_xy(all(isfinite(comparison_xy), 2), :);
 x_limits = [min(comparison_xy(:, 1)), max(comparison_xy(:, 1))];
 y_limits = [min(comparison_xy(:, 2)), max(comparison_xy(:, 2))];
@@ -54,6 +66,9 @@ y_limits = y_limits + [-y_padding, y_padding];
 %% Target Trajectories
 nexttile;
 hold on;
+if isfield(cfg, 'track_segment')
+    draw_track_segment(cfg.track_segment, 'HandleVisibility', 'off');
+end
 if isfield(cfg, 'obstacle')
     draw_obstacles(cfg.obstacle, 'HandleVisibility', 'off');
 end
@@ -88,6 +103,9 @@ title('ODE Source Trajectories');
 %% Rollout Trajectories
 nexttile;
 hold on;
+if isfield(cfg, 'track_segment')
+    draw_track_segment(cfg.track_segment, 'HandleVisibility', 'off');
+end
 if isfield(cfg, 'obstacle')
     draw_obstacles(cfg.obstacle, 'HandleVisibility', 'off');
 end
@@ -200,7 +218,9 @@ else
     title(sprintf('ODE Rollout Trajectories (%d Points, %d Samples)', ...
         size(reconstructed_points, 1), max_curves));
 end
-lgd = legend('Location', 'northeastoutside');
+% 图例放在坐标区下方而不是右侧：northeastoutside 会把整个 tiledlayout 往左挤，
+% 三栏宽度变得不一致。
+lgd = legend('Location', 'southoutside');
 lgd.FontSize = 8;
 lgd.ItemTokenSize = [14, 8];
 

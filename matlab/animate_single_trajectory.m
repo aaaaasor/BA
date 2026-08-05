@@ -7,7 +7,9 @@ output_dir = fullfile(this_dir, 'outputs');
 if cfg.output.enabled && ~exist(output_dir, 'dir')
     mkdir(output_dir);
 end
-output_path = fullfile(output_dir, 'single_trajectory_rollout.gif');
+output_filename = struct_field_default(cfg.animation, ...
+    'output_filename', 'single_trajectory_rollout.gif');
+output_path = fullfile(output_dir, output_filename);
 
 %% Plot Limits
 feature_dim = size(source_points, 2);
@@ -153,4 +155,5 @@ for frame_nr = 1:numel(frame_idx_set)
         end
     end
 end
+
 end

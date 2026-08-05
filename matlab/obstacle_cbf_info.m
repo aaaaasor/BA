@@ -47,8 +47,14 @@ if ~isfield(constraint_cfg, 'obstacle_point_maps')
         '需在 main_demo 里用 build_obstacle_point_maps 构造并挂到约束上。']);
 end
 point_maps = constraint_cfg.obstacle_point_maps;
-centers = constraint_cfg.obstacle_centers;      % 2 x n_obs
-semi_axes = constraint_cfg.obstacle_semi_axes;  % 2 x n_obs
+if isfield(constraint_cfg, 'obstacle_geometry')
+    obstacle_geometry = constraint_cfg.obstacle_geometry;
+else
+    obstacle_geometry = struct( ...
+        'centers', constraint_cfg.obstacle_centers, ...
+        'semi_axes', constraint_cfg.obstacle_semi_axes);
+end
+centers = obstacle_geometry.centers;
 phi0 = struct_field_default(constraint_cfg, 'obstacle_phi0', 2.0);
 omega = struct_field_default(constraint_cfg, 'obstacle_phi1_omega', 4.0);
 phi1_early = struct_field_default(constraint_cfg, ...
@@ -89,14 +95,10 @@ for pm_idx = 1:numel(point_maps)
     o = point_maps(pm_idx).o;
     p = M * x_now + o;           % 物理位置 (2x1)
     for obs_idx = 1:n_obs
-        c = centers(:, obs_idx);
-        a = semi_axes(1, obs_idx);
-        b = semi_axes(2, obs_idx);
-        Q = diag([1 / a^2, 1 / b^2]);
-        d = p - c;
-        h = d' * Q * d - 1.0;
+        [h, grad_h_p, escape_direction] = ...
+            obstacle_level_and_gradient(p, obstacle_geometry, obs_idx);
         % The QP and the physical rollout use the same true cumulative map.
-        grad_h_true = 2.0 * (Q * d)' * M;    % 1 x N
+        grad_h_true = grad_h_p' * M;    % 1 x N
         grad_h_ctrl = grad_h_true;
         if h >= 0
             phi = phi0;
@@ -141,14 +143,7 @@ for pm_idx = 1:numel(point_maps)
             %   3) 可复现，便于复盘。
             % 符号由 d 在该轴上的投影决定(恰在中心时取正)，使方向在整个
             % 中心邻域内恒定，不随数值噪声翻转。
-            if a <= b
-                e_phys = [1.0; 0.0];
-            else
-                e_phys = [0.0; 1.0];
-            end
-            if e_phys' * d < 0.0
-                e_phys = -e_phys;
-            end
+            e_phys = escape_direction;
             % 逃逸方向必须拉回控制空间：u 只能通过 M 影响这个点。
             e_ctrl = e_phys' * M;               % 1 x N
             if norm(e_ctrl) < grad_tol
@@ -163,7 +158,7 @@ for pm_idx = 1:numel(point_maps)
             v_escape = escape_speed;
             if isempty(v_escape)
                 % 缺省取短半轴：一个时间单位内走出椭圆的量级。
-                v_escape = min(a, b);
+                v_escape = min(obstacle_geometry.semi_axes(:, obs_idx));
             end
             obstacle_info.candidate_row_active(candidate_idx, 1) = true;
             obstacle_info.candidate_row_escape(candidate_idx, 1) = true;

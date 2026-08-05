@@ -14,7 +14,13 @@ try
     rng(cfg.random_seed);
 
     % Training data (same setup as main_demo.m)
-    first_level_target_points = generate_original_training_points_2d(5, cfg.n_train);
+    [first_level_target_points, track_segment] = scenario_training_points( ...
+        cfg, 5, cfg.n_train);
+    if ~isempty(track_segment) && ...
+            strcmpi(struct_field_default(cfg, 'scenario', ''), 'racing') && ...
+            struct_field_default(cfg.obstacle, 'enabled', false)
+        cfg.obstacle = configure_racing_obstacles(track_segment, cfg.obstacle);
+    end
     if ~cfg.first_level_use_tangent_features
         error('Loop expects 20D tangent-feature setup; toggle disabled.');
     end
@@ -42,6 +48,11 @@ try
     n_eval = cfg.first_level_generation_samples;
     x_init = randn(n_eval, n_rows);
     first_rollout_constraint = make_level_variance_constraint(cfg, 'first_level');
+    if first_rollout_constraint.obstacle_enabled
+        first_rollout_constraint.obstacle_point_maps = ...
+            build_obstacle_point_maps(data_transform, first_level_feature_dim, ...
+            5, first_rollout_constraint.obstacle_points, 'absolute');
+    end
     [rollout_times, traj_path_10d, first_rollout_diagnostics] = rk4_rollout(...
         model_collection, x_init, cfg.t_min, cfg.rollout_t_max, ...
         cfg.first_level_time_steps, first_rollout_constraint);

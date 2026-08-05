@@ -59,8 +59,14 @@ if cfg.output.enabled
     this_file = mfilename('fullpath');
     output_dir = fullfile(fileparts(this_file), 'outputs');
     if ~exist(output_dir, 'dir'); mkdir(output_dir); end
-    output_path = fullfile(output_dir, ...
-        ['trajectory_gp_sigma_vs_time_', strrep(level_label, ' ', '_'), '_matlab.emf']);
+    if strcmpi(struct_field_default(cfg, 'scenario', ''), 'racing') && ...
+            strcmpi(level_label, 'third-level')
+        output_filename = 'Racing_ThirdLevel_Variance.emf';
+    else
+        output_filename = ['trajectory_gp_sigma_vs_time_', ...
+            strrep(level_label, ' ', '_'), '_matlab.emf'];
+    end
+    output_path = fullfile(output_dir, output_filename);
     export_graphics_compat(fig, output_path);
 end
 end

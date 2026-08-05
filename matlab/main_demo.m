@@ -9,8 +9,18 @@ rng(cfg.random_seed);
 disp('Building first-level trajectory-space training data...');
 this_file = mfilename('fullpath');
 this_dir = fileparts(this_file);
-first_level_target_points = generate_original_training_points_2d( ...
-    5, cfg.n_train);
+[first_level_target_points, track_segment] = scenario_training_points( ...
+    cfg, 5, cfg.n_train);
+% racing 场景下把赛段几何挂到 cfg 上，后面所有 plot_cfg 副本都会带着它，
+% draw_track_segment 据此在轨迹底下画走廊；obstacle 场景为空，画图是空操作。
+if ~isempty(track_segment)
+    cfg.track_segment = track_segment;
+    if strcmpi(struct_field_default(cfg, 'scenario', ''), 'racing') && ...
+            struct_field_default(cfg.obstacle, 'enabled', false)
+        cfg.obstacle = configure_racing_obstacles(track_segment, cfg.obstacle);
+        plot_racing_obstacle_layout(cfg);
+    end
+end
 if isfield(cfg, 'first_level_use_tangent_features') && ...
         ~cfg.first_level_use_tangent_features
     first_level_target_points = first_level_target_points(:, :, 1:2);
@@ -24,7 +34,8 @@ if isfield(cfg, 'first_level_use_tangent_features') && ...
 else
     first_level_feature_mode = '[x, y, dx/ds, dy/ds] tangent';
 end
-disp(['First-level target source: generated 5-point trajectories with ', ...
+disp(['Scenario: ', cfg.scenario]);
+disp(['First-level target source: 5-point trajectories with ', ...
     first_level_feature_mode, ' features']);
 rng(cfg.first_level_data_seed);
 [s_slices, x_slices, y_slices, target_points, source_points, ...
@@ -232,7 +243,7 @@ for sample_idx = 1:n_eval
 end
 reconstructed_points = normalize_tangent_features(reconstructed_points);
 % 终端安全投影已移除: 障碍 CBF 在三层、从 t=0 起全程生效, 规定时间
-% blow-up 项保证前向不变性, 原则上不需要额外的终端投影(导师反馈)。
+% blow-up 项保证前向不变性, 不需要额外的终端投影
 if isfield(cfg, 'stop_after_first_level') && cfg.stop_after_first_level
     disp('Stopping after first level because cfg.stop_after_first_level is true.');
     first_stop_plot_cfg = cfg;
@@ -283,7 +294,9 @@ if isfield(cfg, 'stop_after_first_level') && cfg.stop_after_first_level
             y_padding_compare = 0.08 * max(diff(y_limits_compare), eps);
             xlim(x_limits_compare + [-x_padding_compare, x_padding_compare]);
             ylim(y_limits_compare + [-y_padding_compare, y_padding_compare]);
-            draw_obstacles(cfg.obstacle, 'HandleVisibility', 'off');
+            draw_track_segment(struct_field_default(cfg, 'track_segment', []), ...
+        'HandleVisibility', 'off');
+    draw_obstacles(cfg.obstacle, 'HandleVisibility', 'off');
 
             for before_idx = 1:size(before_points, 2)
                 curve = squeeze(before_points(:, before_idx, 1:2));
@@ -473,7 +486,7 @@ first_level_anchor_idx = 1:(cfg.segment_points_per_segment - 1): ...
     (cfg.segment_points_per_segment - 1) + 1);
 n_second_level_training_points = (size(target_points, 1) - 1) * ...
     (cfg.segment_points_per_segment - 1) + 1;
-target_points_dense = generate_original_training_points_2d( ...
+target_points_dense = scenario_training_points(cfg, ...
     n_second_level_training_points, size(target_points, 2));
 anchor_reconstruction_error = max(abs( ...
     target_points_dense(first_level_anchor_idx, :, 1:first_level_feature_dim) - ...
@@ -780,6 +793,8 @@ if show_second_level_obstacle_figures && ...
         'Units', 'normalized', ...
         'Position', [0.12, 0.16, 0.68, 0.64]);
     hold on;
+    draw_track_segment(struct_field_default(cfg, 'track_segment', []), ...
+        'HandleVisibility', 'off');
     draw_obstacles(cfg.obstacle, 'HandleVisibility', 'off');
     comparison_colors = lines(n_second_level_eval);
     for trajectory_idx = 1:n_second_level_eval
@@ -1012,7 +1027,7 @@ if isfield(cfg, 'enable_third_level') && cfg.enable_third_level
     % 一个间隔；窗口内用局部增量表示 [S0, S1-S0, ..., S4-S3]。
     n_third_level_training_points = (size(target_points_dense, 1) - 1) * ...
         (cfg.segment_points_per_segment - 1) + 1;
-    target_points_fine = generate_original_training_points_2d( ...
+    target_points_fine = scenario_training_points(cfg, ...
         n_third_level_training_points, size(target_points_dense, 2));
     third_level_anchor_idx = 1:(cfg.segment_points_per_segment - 1): ...
         size(target_points_fine, 1);
@@ -1122,17 +1137,17 @@ if isfield(cfg, 'enable_third_level') && cfg.enable_third_level
     % third_anchor_clf_targets 是未缩放的物理坐标(见下面的注释)。
     if isfield(cfg, 'obstacle') && struct_field_default(cfg.obstacle, 'enabled', false)
         obs_centers = cfg.obstacle.centers;
-        obs_axes = cfg.obstacle.semi_axes;
         endpoint_feature_dim = size(third_anchor_clf_targets, 2) / 2;
         disp('  [target-vs-obstacle check]');
         for endpoint_idx = 1:2
             target_xy = third_anchor_clf_targets(:, ...
                 (endpoint_idx - 1) * endpoint_feature_dim + (1:2));
             for obs_idx = 1:size(obs_centers, 2)
-                obs_Q = diag([1 / obs_axes(1, obs_idx) ^ 2, ...
-                    1 / obs_axes(2, obs_idx) ^ 2]);
-                delta_xy = target_xy - obs_centers(:, obs_idx)';
-                target_h = sum((delta_xy * obs_Q) .* delta_xy, 2) - 1.0;
+                target_h = zeros(size(target_xy, 1), 1);
+                for target_idx = 1:size(target_xy, 1)
+                    target_h(target_idx) = obstacle_level_and_gradient( ...
+                        target_xy(target_idx, :)', cfg.obstacle, obs_idx);
+                end
                 sorted_h = sort(target_h);
                 fprintf(['    P%d vs obstacle %d: inside = %d / %d, ', ...
                     'h<0.5 = %d, 4 smallest h = %s\n'], ...
@@ -1579,7 +1594,9 @@ if isfield(cfg, 'enable_third_level') && cfg.enable_third_level
             'Units', 'normalized', ...
             'Position', [0.12, 0.16, 0.68, 0.64]);
         hold on;
-        draw_obstacles(cfg.obstacle, 'HandleVisibility', 'off');
+        draw_track_segment(struct_field_default(cfg, 'track_segment', []), ...
+        'HandleVisibility', 'off');
+    draw_obstacles(cfg.obstacle, 'HandleVisibility', 'off');
         third_comparison_colors = lines(n_third_level_eval);
         for trajectory_idx = 1:n_third_level_eval
             before_curve = squeeze( ...
@@ -2059,6 +2076,10 @@ if cfg.animation.enabled && n_eval > 0
         cfg.segment_points_per_segment;
     if animation_use_third_global_rollout
         animation_cfg.animation.space_label = 'Original Global Space';
+        if strcmpi(struct_field_default(cfg, 'scenario', ''), 'racing')
+            animation_cfg.animation.output_filename = ...
+                'Racing_ThirdLevel_Rollout.gif';
+        end
         % 第三层沿用原动画的 source 展开方式：16 个随机 source segment
         % 按状态向量顺序连续绘制，形成跨区域的灰色虚线；第二层仍逐段断开。
         animation_cfg.animation.break_source_segments = false;
