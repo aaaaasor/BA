@@ -37,7 +37,7 @@ cfg.second_level_generation_samples = 1;
 cfg.third_level_generation_samples = 1;
 % 第二层实验: 继承第一层避障结果，加入 PTCLF 与障碍规定时间 CBF。
 cfg.stop_after_first_level = false;
-cfg.enable_third_level = false;
+cfg.enable_third_level = true;
 % Run a matched first-level baseline with the same initial samples and
 % variance constraints, changing only obstacle_enabled=false.
 cfg.first_level_run_no_obstacle_baseline = false;
@@ -121,15 +121,10 @@ cfg.variance_constraint.grad_tol = 1e-6;
 % few random initial-state outliers.
 cfg.variance_constraint.ood_normalized_sigma_threshold = 0.8;
 cfg.variance_constraint.ood_quantile = 0.95;
-% 障碍 CBF 每层开关 + 作用点(均受 cfg.obstacle.enabled 门控)。
-% L1 管全部 5 骨架点; L2/L3 管每段内部 3 点(端点由上层继承已安全)。
 cfg.variance_constraint.first_level_obstacle_enabled  = true;
 cfg.variance_constraint.first_level_obstacle_points   = [1 2 3 4 5];
 cfg.variance_constraint.second_level_obstacle_enabled = true;
 cfg.variance_constraint.second_level_obstacle_points  = [2 3 4];
-% 对照实验结论(2026-07-25): 关掉第三层避障后 P5 误差只从 0.041 降到
-% 0.034(17%)，且最差段仍是同一段 row 8。说明末点误差主要不是避障造成
-% 的，而是 sequential QP 只给末点 u5(杠杆 0.01) 而非完整 u(杠杆 0.24)。
 cfg.variance_constraint.third_level_obstacle_enabled  = true;
 cfg.variance_constraint.third_level_obstacle_points   = [2 3 4];
 cfg.variance_constraint.first_level_integral_uncertainty_budget = 10;
@@ -154,11 +149,19 @@ cfg.variance_constraint.first_level_terminal_variance_slack_enabled = false;
 % 前期(t<switch) variance 硬、避障软；后期(t>=switch) variance 软、避障硬
 % (导师方案，实验③)。hocbf 前硬后软，obstacle 前软后硬。
 cfg.variance_constraint.first_level_slack_switch_time = 0.65;
+% First-level obstacle PTCBF: wait until the random source begins to form a
+% track-shaped trajectory, then use a soft-to-hard obstacle correction.
+cfg.variance_constraint.first_level_obstacle_activation_time = 0.30;
+cfg.variance_constraint.first_level_obstacle_phi0 = 2.0;
+cfg.variance_constraint.first_level_obstacle_phi1_omega = 0.8;
+cfg.variance_constraint.first_level_obstacle_slack_enabled = true;
+cfg.variance_constraint.first_level_obstacle_slack_weight = 10;
+cfg.variance_constraint.first_level_obstacle_slack_hard_after_time = 0.75;
 % Second level: obstacle, variance HOCBF/PTCBF, and endpoint PTCLF enabled.
 cfg.variance_constraint.second_level_integral_uncertainty_budget = 3;
 cfg.variance_constraint.second_level_hocbf_enabled = true;
 cfg.variance_constraint.second_level_hocbf_alpha2 = 0.5;
-cfg.variance_constraint.second_level_hocbf_relaxation_bound = 5;
+cfg.variance_constraint.second_level_hocbf_relaxation_bound = 8;
 cfg.variance_constraint.second_level_psi1_margin = 55;
 cfg.variance_constraint.second_level_diagnostics = false;
 cfg.variance_constraint.second_level_ptcbf_enabled = true;
@@ -182,18 +185,20 @@ cfg.variance_constraint.second_level_slack_enabled = true;
 cfg.variance_constraint.second_level_hocbf_slack_enabled = false;
 cfg.variance_constraint.second_level_terminal_variance_slack_enabled = false;
 cfg.variance_constraint.second_level_anchor_clf_slack_enabled = true;
-% Before 0.55: variance HOCBF hard, obstacle PTCBF/PTCLF soft.
-% From 0.55: variance HOCBF may use slack, obstacle PTCBF/PTCLF become hard.
+% At 0.65 the variance HOCBF may use slack, while the obstacle PTCBF and
+% endpoint PTCLF become hard for the final rollout stage.
 cfg.variance_constraint.second_level_slack_switch_time = 0.65;
 cfg.variance_constraint.second_level_anchor_clf_slack_hard_after_time = 0.65;
 cfg.variance_constraint.second_level_obstacle_slack_enabled = true;
-cfg.variance_constraint.second_level_obstacle_activation_time = 0.30;
+cfg.variance_constraint.second_level_obstacle_activation_time = 0.70;
 % 第二层 obstacle PTCBF 的独立 blow-up 增益：仅作用于第二层 h<0 时的
 % phi1=omega/(1-t_eff)^2；不再需要修改三层共用的 cfg.obstacle.phi1_omega。
-cfg.variance_constraint.second_level_obstacle_phi1_omega = 2.5;
+cfg.variance_constraint.second_level_obstacle_phi0 = 2.0;
+cfg.variance_constraint.second_level_obstacle_phi1_omega = 0.3;
 cfg.variance_constraint.second_level_obstacle_slack_hard_after_time = 0.65;
-cfg.variance_constraint.second_level_hocbf_slack_weight = 66.8;
-cfg.variance_constraint.second_level_terminal_variance_slack_weight = 100;
+cfg.variance_constraint.second_level_hocbf_slack_weight = 10;
+cfg.variance_constraint.second_level_obstacle_slack_weight = 10;
+cfg.variance_constraint.second_level_terminal_variance_slack_weight = 10;
 cfg.variance_constraint.second_level_anchor_clf_slack_weight = 30;
 cfg.variance_constraint.second_level_anchor_snap_flow_steps = 5;
 cfg.variance_constraint.second_level_anchor_snap_position_only = false;
@@ -264,10 +269,10 @@ cfg.variance_constraint.third_level_anchor_clf_slack_enabled = false;
 cfg.variance_constraint.third_level_slack_switch_time = inf;
 cfg.variance_constraint.third_level_anchor_clf_slack_hard_after_time = 0.85;
 cfg.variance_constraint.third_level_obstacle_slack_enabled = false;
-cfg.variance_constraint.third_level_obstacle_activation_time = 0.00;
+cfg.variance_constraint.third_level_obstacle_activation_time = 0.70;
 cfg.variance_constraint.third_level_obstacle_slack_hard_after_time = 0.85;
 cfg.variance_constraint.third_level_obstacle_slack_weight = 100;
-cfg.variance_constraint.third_level_obstacle_phi1_omega =0.2;
+cfg.variance_constraint.third_level_obstacle_phi1_omega = 2;
 % 障碍内 h<0 时采用分段增益：前段先弱拉回，等 PTCLF 基本收敛后
 % 再切换到 omega/(1-t_eff)^2 的 blow-up 增益。
 cfg.variance_constraint.third_level_obstacle_phi1_early_gain = 0.05;
@@ -285,13 +290,12 @@ cfg.variance_constraint.third_level_post_endpoint_overwrite_enabled = false;
 
 %% Scenario Overrides
 % Racing uses track-relative obstacle geometry rather than the fixed
-% unit-square obstacle above. This master switch enables the current
-% single-square experiment; set it to false for the obstacle-free baseline.
+% unit-square obstacle above. cfg.obstacle.enabled (defined once above) is
+% the sole master switch for both the obstacle and racing scenarios.
 if strcmp(cfg.scenario, 'racing')
     % Geometry is populated after the track segment is loaded. This avoids
     % hard-coded unit-square coordinates and keeps obstacle sizes tied to
     % the local racing corridor width.
-    cfg.obstacle.enabled = true;
     cfg.cache.first_level_model_path = fullfile('outputs', ...
         'Racing_FirstLevel_Model.mat');
     cfg.cache.second_level_model_path = fullfile('outputs', ...
