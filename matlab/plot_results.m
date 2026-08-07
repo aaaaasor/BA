@@ -127,6 +127,7 @@ rollout_colors = lines(max(max_curves, 1));
 if use_segment_plot
     curve_label = struct_field_default(cfg, 'sample_curve_label', 'Stage 2 sample curves');
     marker_label = struct_field_default(cfg, 'generated_point_label', 'Stage 2 generated points');
+    show_generated_points = struct_field_default(cfg, 'show_generated_points', true);
     for traj_idx = 1:max_curves
         for segment_idx = 1:n_segments
             sample_idx = (traj_idx - 1) * n_segments + segment_idx;
@@ -139,15 +140,19 @@ if use_segment_plot
             if traj_idx == 1 && segment_idx == 1
                 plot(segment_curve(:, 1), segment_curve(:, 2), ...
                     'Color', color, 'LineWidth', 1.1, 'DisplayName', curve_label);
-                plot(segment_curve(:, 1), segment_curve(:, 2), 'o', ...
-                    'Color', color, 'MarkerFaceColor', color, ...
-                    'MarkerSize', 4, 'LineStyle', 'none', 'DisplayName', marker_label);
+                if show_generated_points
+                    plot(segment_curve(:, 1), segment_curve(:, 2), 'o', ...
+                        'Color', color, 'MarkerFaceColor', color, ...
+                        'MarkerSize', 4, 'LineStyle', 'none', 'DisplayName', marker_label);
+                end
             else
                 plot(segment_curve(:, 1), segment_curve(:, 2), ...
                     'Color', color, 'LineWidth', 1.1, 'HandleVisibility', 'off');
-                plot(segment_curve(:, 1), segment_curve(:, 2), 'o', ...
-                    'Color', color, 'MarkerFaceColor', color, ...
-                    'MarkerSize', 4, 'LineStyle', 'none', 'HandleVisibility', 'off');
+                if show_generated_points
+                    plot(segment_curve(:, 1), segment_curve(:, 2), 'o', ...
+                        'Color', color, 'MarkerFaceColor', color, ...
+                        'MarkerSize', 4, 'LineStyle', 'none', 'HandleVisibility', 'off');
+                end
             end
         end
     end
@@ -166,7 +171,8 @@ else
         end
     end
 end
-if isfield(cfg, 'anchor_points') && ~isempty(cfg.anchor_points)
+show_anchor_points = struct_field_default(cfg, 'show_anchor_points', true);
+if show_anchor_points && isfield(cfg, 'anchor_points') && ~isempty(cfg.anchor_points)
     anchor_points = cfg.anchor_points;
     n_anchor_curves = min(size(anchor_points, 2), max_curves);
     for idx = 1:n_anchor_curves
@@ -187,7 +193,9 @@ if isfield(cfg, 'anchor_points') && ~isempty(cfg.anchor_points)
         end
     end
 end
-if isfield(cfg, 'anchor_target_points') && ~isempty(cfg.anchor_target_points)
+show_anchor_target_points = struct_field_default(cfg, 'show_anchor_target_points', true);
+if show_anchor_target_points && isfield(cfg, 'anchor_target_points') && ...
+        ~isempty(cfg.anchor_target_points)
     anchor_target_points = cfg.anchor_target_points;
     n_anchor_target_curves = min(size(anchor_target_points, 2), max_curves);
     for idx = 1:n_anchor_target_curves

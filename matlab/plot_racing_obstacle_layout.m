@@ -23,7 +23,7 @@ xlim(ax, [0, 1]);
 ylim(ax, [0, 1.05]);
 xlabel(ax, 'x');
 ylabel(ax, 'y');
-title(ax, 'Racing Track with Square and Ellipse Obstacles');
+title(ax, 'Racing Track with Three Obstacles');
 
 if cfg.output.enabled
     output_dir = fullfile(fileparts(mfilename('fullpath')), 'outputs');

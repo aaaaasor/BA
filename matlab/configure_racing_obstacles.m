@@ -1,5 +1,5 @@
 function obstacle = configure_racing_obstacles(track_segment, obstacle)
-%CONFIGURE_RACING_OBSTACLES Place a square and an ellipse along the track.
+%CONFIGURE_RACING_OBSTACLES Place three configurable obstacles on the track.
 % Both obstacle sizes scale with the local track width.
 
 if nargin < 2 || isempty(obstacle)
@@ -31,25 +31,32 @@ if struct_field_default(square_cfg, 'enabled', true)
 
     square_half_size = struct_field_default(square_cfg, ...
         'half_size_ratio', 1.05) * local_width;
+    square_length_ratio = struct_field_default(square_cfg, ...
+        'length_ratio', 1.0);
+    square_semi_axes = square_half_size * [square_length_ratio; 1.0];
     square_exponent = struct_field_default(square_cfg, 'exponent', 12);
     relative_angle = struct_field_default(square_cfg, ...
         'relative_angle', pi / 4);
+    tangent_angle = atan2(tangent(2), tangent(1));
+    square_angle = struct_field_default(square_cfg, ...
+        'global_angle', tangent_angle + relative_angle);
+    placement_angle = square_angle - tangent_angle;
 
     % Account for the rotated superellipse's projection onto the track
     % normal when placing the requested fraction inside the corridor.
     dual_exponent = square_exponent / (square_exponent - 1);
-    normal_half_extent = square_half_size * ...
-        (abs(sin(relative_angle)) ^ dual_exponent + ...
-         abs(cos(relative_angle)) ^ dual_exponent) ^ (1 / dual_exponent);
+    normal_half_extent = ...
+        ((square_semi_axes(1) * abs(sin(placement_angle))) ^ dual_exponent + ...
+         (square_semi_axes(2) * abs(cos(placement_angle))) ^ dual_exponent) ...
+        ^ (1 / dual_exponent);
     inside_ratio = min(max(struct_field_default(square_cfg, ...
         'track_inside_ratio', 0.50), 0), 1);
     intrusion_depth = 2 * inside_ratio * normal_half_extent;
     center_offset = left_half_width + normal_half_extent - intrusion_depth;
     square_center = centerline_point + center_offset * left_normal;
-    square_angle = atan2(tangent(2), tangent(1)) + relative_angle;
 
     centers(:, end + 1) = square_center;
-    semi_axes(:, end + 1) = [square_half_size; square_half_size];
+    semi_axes(:, end + 1) = square_semi_axes;
     angles(end + 1) = square_angle;
     types(end + 1) = "square";
     exponents(end + 1) = square_exponent;
@@ -86,6 +93,39 @@ if struct_field_default(ellipse_cfg, 'enabled', true)
     angles(end + 1) = ellipse_angle;
     types(end + 1) = "ellipse";
     exponents(end + 1) = 2;
+end
+
+%% Fourth-order superellipse inside the corridor
+superellipse_cfg = struct_field_default(obstacle, 'superellipse', struct());
+if struct_field_default(superellipse_cfg, 'enabled', true)
+    superellipse_fraction = struct_field_default(superellipse_cfg, ...
+        'track_fraction', 0.24);
+    superellipse_index = max(2, min(n_center - 1, ...
+        round(1 + superellipse_fraction * (n_center - 1))));
+    superellipse_center = track_segment.center(superellipse_index, :)';
+    superellipse_center(1) = superellipse_center(1) + ...
+        struct_field_default(superellipse_cfg, 'center_x_offset', 0.022);
+    superellipse_center(2) = superellipse_center(2) + ...
+        struct_field_default(superellipse_cfg, 'center_y_offset', 0.038);
+    tangent = track_segment.tangent(superellipse_index, :)';
+    tangent = tangent ./ max(norm(tangent), eps);
+    local_width = max(min( ...
+        track_segment.half_width_left(superellipse_index), ...
+        track_segment.half_width_right(superellipse_index)), eps);
+    semi_major = struct_field_default(superellipse_cfg, ...
+        'semi_major_ratio', 2.6) * local_width;
+    semi_minor = struct_field_default(superellipse_cfg, ...
+        'semi_minor_ratio', 0.45) * local_width;
+    relative_angle = struct_field_default(superellipse_cfg, ...
+        'relative_angle', pi / 36);
+    superellipse_angle = atan2(tangent(2), tangent(1)) + relative_angle;
+    exponent = struct_field_default(superellipse_cfg, 'exponent', 4);
+
+    centers(:, end + 1) = superellipse_center;
+    semi_axes(:, end + 1) = [semi_major; semi_minor];
+    angles(end + 1) = superellipse_angle;
+    types(end + 1) = "superellipse4";
+    exponents(end + 1) = exponent;
 end
 
 % Preserve the caller's master switch. If no switch was supplied, enabling

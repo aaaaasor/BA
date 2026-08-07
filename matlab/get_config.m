@@ -48,6 +48,19 @@ cfg.second_level_run_no_obstacle_baseline = false;
 cfg.third_level_run_no_obstacle_baseline = false;
 cfg.third_level_window_stride = cfg.segment_points_per_segment - 1;
 
+%% Parallel Execution
+% RK4 rollout 的 sample 循环（每个 sample = 一条轨迹）可以串行或并行执行。
+% 默认串行(enabled=false)，行为与之前完全一致；打开后每个 worker(核)一次
+% 只领一条轨迹（SubrangeSize=1），算完再领下一条。并行需要 Parallel
+% Computing Toolbox；缺少时按 fallback_to_serial 决定是退回串行还是报错。
+cfg.parallel.enabled = false;
+% 0 = 用默认 parallel profile 的核数；>0 = 指定核数。实际 worker 数还会被
+% 轨迹条数截断（不会开比轨迹更多的 worker）。本机 CPU 有 10 物理核/12 逻辑核，
+% 但保存的 'Processes' profile 的 NumWorkers 是 2，ensure_parallel_pool 会在
+% 内存里的 cluster 副本上按需调大，不改用户保存的 profile。
+cfg.parallel.num_workers = 8;
+cfg.parallel.fallback_to_serial = true;
+
 %% Animation
 cfg.animation.enabled = true;
 cfg.animation.trajectory_nr = 1;
@@ -59,6 +72,10 @@ cfg.animation.third_level_diagnostic_segment = 0;
 
 %% Output
 cfg.output.enabled = true;
+% Rollout figure marker switch:
+% true  = show colored generated-point circles and square/diamond anchors;
+% false = draw trajectory lines only.
+cfg.output.rollout_markers_enabled = true;
 
 %% Cache
 cfg.cache.first_level_model_path = fullfile('outputs', 'LoG_GP_FirstLevel_Model.mat');
@@ -96,7 +113,7 @@ cfg.gp.max_local_gp_quantity = ceil(2.0 * cfg.n_train * cfg.n_time_slices / ...
 cfg.gp.o_ratio = 0.001;
 cfg.gp.aggregation_method = 'GPOE';
 cfg.gp.first_level_training_accuracy_threshold = 0.8;
-cfg.gp.second_level_training_accuracy_threshold = 2.0;
+cfg.gp.second_level_training_accuracy_threshold = 3.0;
 cfg.gp.third_level_training_accuracy_threshold = 1.5;
 %% Obstacle (SafeFlow 避障, 物理坐标; 列 = 障碍)
 % 总开关: 关掉 = 完全退回原三层生成
@@ -115,10 +132,11 @@ cfg.obstacle.escape_speed = [];
 % Racing obstacle geometry. Each shape can be enabled and adjusted
 % independently; cfg.obstacle.enabled remains the sole master switch.
 cfg.obstacle.square.enabled = true;
-cfg.obstacle.square.track_fraction = 0.75;
+cfg.obstacle.square.track_fraction = 0.72;
 cfg.obstacle.square.half_size_ratio = 1.05;
-cfg.obstacle.square.relative_angle = pi / 4;
-cfg.obstacle.square.exponent = 12;
+cfg.obstacle.square.length_ratio = 3;
+cfg.obstacle.square.global_angle = 0.0;  % horizontal long diagonal
+cfg.obstacle.square.exponent = 1.2;     % smooth diamond-like boundary
 cfg.obstacle.square.track_inside_ratio = 0.50;
 
 cfg.obstacle.ellipse.enabled = true;
@@ -131,6 +149,15 @@ cfg.obstacle.ellipse.semi_major_ratio = 4.5;
 cfg.obstacle.ellipse.semi_minor_ratio = 2.0;
 % Zero aligns the major axis with the local track tangent.
 cfg.obstacle.ellipse.relative_angle = 0.0;
+
+cfg.obstacle.superellipse.enabled = true;
+cfg.obstacle.superellipse.track_fraction = 0.31;
+cfg.obstacle.superellipse.center_x_offset = 0.019;
+cfg.obstacle.superellipse.center_y_offset = 0.038;
+cfg.obstacle.superellipse.semi_major_ratio = 3.0;
+cfg.obstacle.superellipse.semi_minor_ratio = 0.45;
+cfg.obstacle.superellipse.relative_angle = pi / 18;
+cfg.obstacle.superellipse.exponent = 4;
 
 %% Variance Constraint
 cfg.variance_constraint.grad_tol = 1e-6;
@@ -195,8 +222,8 @@ cfg.variance_constraint.second_level_closed_form_solver_enabled = false;
 % Vbar(t) = Vbar0*exp(-cg*t/(1-t))。(第三层才换成 SafeFlow 的 FMBF 形式。)
 cfg.variance_constraint.second_level_anchor_clf_form = 'envelope';
 cfg.variance_constraint.second_level_anchor_clf_ptzf_enabled = true;
-cfg.variance_constraint.second_level_anchor_clf_ptzf_cg = 2.0;
-cfg.variance_constraint.second_level_anchor_clf_cpt = 100;
+cfg.variance_constraint.second_level_anchor_clf_ptzf_cg = 2.5;
+cfg.variance_constraint.second_level_anchor_clf_cpt = 50;
 cfg.variance_constraint.second_level_anchor_clf_ptzf_initial_margin = 4;
 cfg.variance_constraint.second_level_slack_enabled = true;
 % hocbf_slack_enabled=false: t < switch 硬，t >= switch 才靠
@@ -210,17 +237,17 @@ cfg.variance_constraint.second_level_anchor_clf_slack_enabled = true;
 cfg.variance_constraint.second_level_slack_switch_time = 0.65;
 cfg.variance_constraint.second_level_anchor_clf_slack_hard_after_time = 0.65;
 cfg.variance_constraint.second_level_obstacle_slack_enabled = true;
-cfg.variance_constraint.second_level_obstacle_activation_time = 0.85;
+cfg.variance_constraint.second_level_obstacle_activation_time = 0.94;
 % 第二层 obstacle PTCBF 的独立 blow-up 增益：仅作用于第二层 h<0 时的
 % phi1=omega/(1-t_eff)^2；不再需要修改三层共用的 cfg.obstacle.phi1_omega。
-cfg.variance_constraint.second_level_obstacle_phi0 = 2.0;
-cfg.variance_constraint.second_level_obstacle_phi1_omega = 0.3;
+cfg.variance_constraint.second_level_obstacle_phi0 = 3.0;
+cfg.variance_constraint.second_level_obstacle_phi1_omega = 0.1;
 cfg.variance_constraint.second_level_obstacle_slack_hard_after_time = 0.65;
 cfg.variance_constraint.second_level_hocbf_slack_weight = 10;
 cfg.variance_constraint.second_level_obstacle_slack_weight = 10;
 cfg.variance_constraint.second_level_terminal_variance_slack_weight = 10;
 cfg.variance_constraint.second_level_anchor_clf_slack_weight = 30;
-cfg.variance_constraint.second_level_anchor_snap_flow_steps = 5;
+cfg.variance_constraint.second_level_anchor_snap_flow_steps = 15;
 cfg.variance_constraint.second_level_anchor_snap_position_only = false;
 cfg.variance_constraint.second_level_anchor_clf_position_only = false;
 cfg.variance_constraint.third_level_integral_uncertainty_budget = 0.5;
@@ -288,15 +315,15 @@ cfg.variance_constraint.third_level_terminal_variance_slack_enabled = false;
 cfg.variance_constraint.third_level_anchor_clf_slack_enabled = false;
 cfg.variance_constraint.third_level_slack_switch_time = inf;
 cfg.variance_constraint.third_level_anchor_clf_slack_hard_after_time = 0.85;
-cfg.variance_constraint.third_level_obstacle_slack_enabled = false;
-cfg.variance_constraint.third_level_obstacle_activation_time = 0.85;
+cfg.variance_constraint.third_level_obstacle_slack_enabled = true;
+cfg.variance_constraint.third_level_obstacle_activation_time = 0.65;
 cfg.variance_constraint.third_level_obstacle_slack_hard_after_time = 0.85;
 cfg.variance_constraint.third_level_obstacle_slack_weight = 100;
-cfg.variance_constraint.third_level_obstacle_phi1_omega = 0.5;
+cfg.variance_constraint.third_level_obstacle_phi1_omega = 0.1;
 % 障碍内 h<0 时采用分段增益：前段先弱拉回，等 PTCLF 基本收敛后
 % 再切换到 omega/(1-t_eff)^2 的 blow-up 增益。
 cfg.variance_constraint.third_level_obstacle_phi1_early_gain = 0.05;
-cfg.variance_constraint.third_level_obstacle_phi1_switch_time = 0.0;
+cfg.variance_constraint.third_level_obstacle_phi1_switch_time = 0.70;
 cfg.variance_constraint.third_level_obstacle_phi0 = 2;
 cfg.variance_constraint.third_level_hocbf_slack_weight = 0.001;
 cfg.variance_constraint.third_level_terminal_variance_slack_weight = 1;

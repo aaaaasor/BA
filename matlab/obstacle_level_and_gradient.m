@@ -8,9 +8,9 @@ semi_axes = obstacle.semi_axes(:, obstacle_idx);
 angle = obstacle_value(obstacle, 'angles', obstacle_idx, 0.0);
 exponent = obstacle_value(obstacle, 'exponents', obstacle_idx, 2.0);
 
-if any(semi_axes <= 0) || ~isfinite(exponent) || exponent < 2
+if any(semi_axes <= 0) || ~isfinite(exponent) || exponent <= 1
     error('obstacle_level_and_gradient:InvalidGeometry', ...
-        'Obstacle semi-axes must be positive and exponent must be >= 2.');
+        'Obstacle semi-axes must be positive and exponent must be > 1.');
 end
 
 rotation = [cos(angle), -sin(angle); sin(angle), cos(angle)];

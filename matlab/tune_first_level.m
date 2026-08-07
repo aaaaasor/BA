@@ -55,7 +55,8 @@ try
     end
     [rollout_times, traj_path_10d, first_rollout_diagnostics] = rk4_rollout(...
         model_collection, x_init, cfg.t_min, cfg.rollout_t_max, ...
-        cfg.first_level_time_steps, first_rollout_constraint);
+        cfg.first_level_time_steps, first_rollout_constraint, [], ...
+        struct_field_default(cfg, 'parallel', []));
 
     % Extract compact summary
     trace = first_rollout_diagnostics.hocbf;
