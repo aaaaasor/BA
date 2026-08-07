@@ -104,7 +104,11 @@ title('ODE Source Trajectories');
 nexttile;
 hold on;
 if isfield(cfg, 'track_segment')
-    draw_track_segment(cfg.track_segment, 'HandleVisibility', 'off');
+    rollout_track = cfg.track_segment;
+    % Keep the corridor and its boundaries in the rollout panel, but omit
+    % the reference raceline so it cannot be confused with generated paths.
+    rollout_track.raceline(:) = nan;
+    draw_track_segment(rollout_track, 'HandleVisibility', 'off');
 end
 if isfield(cfg, 'obstacle')
     draw_obstacles(cfg.obstacle, 'HandleVisibility', 'off');

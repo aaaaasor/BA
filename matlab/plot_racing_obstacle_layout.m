@@ -20,10 +20,10 @@ draw_obstacles(cfg.obstacle, 'HandleVisibility', 'off');
 grid(ax, 'off');
 axis(ax, 'equal');
 xlim(ax, [0, 1]);
-ylim(ax, [0, 1]);
+ylim(ax, [0, 1.05]);
 xlabel(ax, 'x');
 ylabel(ax, 'y');
-title(ax, 'Racing Track with One Square Obstacle');
+title(ax, 'Racing Track with Square and Ellipse Obstacles');
 
 if cfg.output.enabled
     output_dir = fullfile(fileparts(mfilename('fullpath')), 'outputs');

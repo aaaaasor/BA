@@ -112,6 +112,26 @@ cfg.obstacle.slack_weight  = 100;
 % 速度。留空 = 自适应取该障碍的短半轴 min(a,b)，即一个时间单位走出椭圆。
 cfg.obstacle.escape_speed = [];
 
+% Racing obstacle geometry. Each shape can be enabled and adjusted
+% independently; cfg.obstacle.enabled remains the sole master switch.
+cfg.obstacle.square.enabled = true;
+cfg.obstacle.square.track_fraction = 0.75;
+cfg.obstacle.square.half_size_ratio = 1.05;
+cfg.obstacle.square.relative_angle = pi / 4;
+cfg.obstacle.square.exponent = 12;
+cfg.obstacle.square.track_inside_ratio = 0.50;
+
+cfg.obstacle.ellipse.enabled = true;
+cfg.obstacle.ellipse.track_fraction = 0.52;
+cfg.obstacle.ellipse.center_x = 0.30;
+% Place the ellipse on the upper/outside edge, leaving 40% clear below.
+cfg.obstacle.ellipse.center_y = 0.966193843;
+% Semi-major/minor axes relative to the local corridor half-width.
+cfg.obstacle.ellipse.semi_major_ratio = 4.5;
+cfg.obstacle.ellipse.semi_minor_ratio = 2.0;
+% Zero aligns the major axis with the local track tangent.
+cfg.obstacle.ellipse.relative_angle = 0.0;
+
 %% Variance Constraint
 cfg.variance_constraint.grad_tol = 1e-6;
 % OOD is evaluated in a dimensionless GP scale:
@@ -190,7 +210,7 @@ cfg.variance_constraint.second_level_anchor_clf_slack_enabled = true;
 cfg.variance_constraint.second_level_slack_switch_time = 0.65;
 cfg.variance_constraint.second_level_anchor_clf_slack_hard_after_time = 0.65;
 cfg.variance_constraint.second_level_obstacle_slack_enabled = true;
-cfg.variance_constraint.second_level_obstacle_activation_time = 0.70;
+cfg.variance_constraint.second_level_obstacle_activation_time = 0.85;
 % 第二层 obstacle PTCBF 的独立 blow-up 增益：仅作用于第二层 h<0 时的
 % phi1=omega/(1-t_eff)^2；不再需要修改三层共用的 cfg.obstacle.phi1_omega。
 cfg.variance_constraint.second_level_obstacle_phi0 = 2.0;
@@ -269,10 +289,10 @@ cfg.variance_constraint.third_level_anchor_clf_slack_enabled = false;
 cfg.variance_constraint.third_level_slack_switch_time = inf;
 cfg.variance_constraint.third_level_anchor_clf_slack_hard_after_time = 0.85;
 cfg.variance_constraint.third_level_obstacle_slack_enabled = false;
-cfg.variance_constraint.third_level_obstacle_activation_time = 0.70;
+cfg.variance_constraint.third_level_obstacle_activation_time = 0.85;
 cfg.variance_constraint.third_level_obstacle_slack_hard_after_time = 0.85;
 cfg.variance_constraint.third_level_obstacle_slack_weight = 100;
-cfg.variance_constraint.third_level_obstacle_phi1_omega = 2;
+cfg.variance_constraint.third_level_obstacle_phi1_omega = 0.5;
 % 障碍内 h<0 时采用分段增益：前段先弱拉回，等 PTCLF 基本收敛后
 % 再切换到 omega/(1-t_eff)^2 的 blow-up 增益。
 cfg.variance_constraint.third_level_obstacle_phi1_early_gain = 0.05;
