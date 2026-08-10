@@ -30,10 +30,19 @@ end
 
 requested_workers = struct_field_default(parallel_cfg, 'num_workers', 0);
 pool = gcp('nocreate');
-if isempty(pool)
-	try
+try
+	% 显式请求 worker 数时始终服从配置，不再按当前 rollout 的轨迹数截断。
+	% 这样前一层即使只有 5 条轨迹，也会建立 8-worker 池供后续层复用。
+	if ~isempty(pool) && requested_workers > 0 && ...
+			pool.NumWorkers ~= requested_workers
+		fprintf(['  Replacing the existing parallel pool with %d workers ', ...
+			'(currently %d).\n'], requested_workers, pool.NumWorkers);
+		delete(pool);
+		pool = [];
+	end
+	if isempty(pool)
 		if requested_workers > 0
-			target_workers = min(requested_workers, n_tasks);
+			target_workers = requested_workers;
 			% 保存的 profile 里 NumWorkers 可能小于这里要的核数（MATLAB 的
 			% 'Processes' profile 默认值不一定等于物理核数），直接在内存里的
 			% cluster 副本上调大，不动用户保存的 profile。
@@ -49,18 +58,15 @@ if isempty(pool)
 		else
 			pool = parpool();
 		end
-	catch pool_err
-		if fallback_to_serial
-			warning('ensure_parallel_pool:PoolStartFailed', ...
-				'Could not start a parallel pool (%s); running serially.', ...
-				pool_err.message);
-			return;
-		end
-		rethrow(pool_err);
 	end
-elseif requested_workers > 0 && pool.NumWorkers ~= min(requested_workers, n_tasks)
-	fprintf(['  Reusing the existing parallel pool with %d workers ', ...
-		'(requested %d).\n'], pool.NumWorkers, requested_workers);
+catch pool_err
+	if fallback_to_serial
+		warning('ensure_parallel_pool:PoolStartFailed', ...
+			'Could not prepare a parallel pool (%s); running serially.', ...
+			pool_err.message);
+		return;
+	end
+	rethrow(pool_err);
 end
 worker_count = pool.NumWorkers;
 end

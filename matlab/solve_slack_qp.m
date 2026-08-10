@@ -189,7 +189,7 @@ if ~(exist('quadprog', 'file') == 2 || exist('quadprog', 'builtin') == 5)
 	end
 end
 
-persistent quadprog_options active_quadprog_options
+persistent quadprog_options active_quadprog_options phase1_linprog_options
 if isempty(quadprog_options)
 	quadprog_options = optimoptions('quadprog', 'Display', 'off', ...
 		'MaxIterations', 2000, 'ConstraintTolerance', 1e-6, ...
@@ -200,6 +200,70 @@ qp_timer = tic;
 	H, f, A_solve, b_qp, Aeq_solve, beq, lb, [], [], quadprog_options);
 qp_solve_seconds = toc(qp_timer);
 qp_iterations = qp_output.iterations;
+
+% A corridor contributes exact opposite row pairs, while integral and
+% terminal contribute duplicate rows.  Interior-point can incorrectly
+% report infeasibility on this highly degenerate geometry even though all
+% non-safety rows have slack.  If that happens, first find a point that
+% satisfies only the genuinely hard rows, construct the soft slacks
+% explicitly, and start active-set from this certified feasible point.
+if exitflag <= 0 && ...
+		(exist('linprog', 'file') == 2 || exist('linprog', 'builtin') == 5)
+	hard_rows = find(~slack_enabled);
+	try
+		if isempty(phase1_linprog_options)
+			phase1_linprog_options = optimoptions('linprog', 'Display', 'off');
+		end
+		phase_timer = tic;
+		[u_feasible, ~, phase_exitflag] = linprog(zeros(n_u, 1), ...
+			A_qp(hard_rows, :), b_qp(hard_rows), Aeq_u, beq, ...
+			[], [], phase1_linprog_options);
+		qp_solve_seconds = qp_solve_seconds + toc(phase_timer);
+		if phase_exitflag > 0 && ~isempty(u_feasible) && ...
+				all(isfinite(u_feasible))
+			z_feasible = [u_feasible; zeros(n_slack, 1)];
+			if n_slack > 0
+				z_feasible(n_u + (1:n_slack)) = max( ...
+					A_qp(slack_rows, :) * u_feasible - ...
+					b_qp(slack_rows), 0.0) + 1e-10;
+			end
+			if isempty(active_quadprog_options)
+				active_quadprog_options = optimoptions('quadprog', ...
+					'Display', 'off', 'Algorithm', 'active-set', ...
+					'MaxIterations', 1000, 'ConstraintTolerance', 1e-7, ...
+					'OptimalityTolerance', 1e-7, 'StepTolerance', 1e-10);
+			end
+			active_timer = tic;
+			[z_phase_active, fval_phase_active, ...
+				exitflag_phase_active, output_phase_active, ...
+				lambda_phase_active] = quadprog(H, f, A_solve, b_qp, ...
+				Aeq_solve, beq, lb, [], z_feasible, ...
+				active_quadprog_options);
+			qp_solve_seconds = qp_solve_seconds + toc(active_timer);
+			phase_active_feasible = ~isempty(z_phase_active) && ...
+				all(isfinite(z_phase_active)) && ...
+				max([A_solve * z_phase_active - b_qp; 0.0]) <= 1e-6 && ...
+				max([lb - z_phase_active; 0.0]) <= 1e-9;
+			if phase_active_feasible && ~isempty(Aeq_solve)
+				phase_active_feasible = norm( ...
+					Aeq_solve * z_phase_active - beq, inf) <= 1e-6;
+			end
+			if phase_active_feasible && exitflag_phase_active > 0
+				z_col = z_phase_active;
+				qp_fval = fval_phase_active;
+				exitflag = exitflag_phase_active;
+				qp_output = output_phase_active;
+				qp_lambda = lambda_phase_active;
+				qp_iterations = qp_iterations + ...
+					output_phase_active.iterations;
+			end
+		end
+	catch phase_err
+		warning('solve_slack_qp:phaseOneRetryFailed', ...
+			'Hard-row feasibility/active-set retry failed at t=%.6g: %s', ...
+			t, phase_err.message);
+	end
+end
 
 % Interior-point-convex can exhaust its iteration budget when two soft
 % rows are parallel (the integral and terminal variance rows share the

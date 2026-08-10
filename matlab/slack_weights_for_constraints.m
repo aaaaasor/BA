@@ -28,6 +28,9 @@ for idx = 1:numel(constraint_types)
 			% 障碍 CBF slack 只作可行性兜底，权重设大 -> 近似硬约束。
 			weights(idx) = struct_field_default(constraint_cfg, ...
 				'obstacle_slack_weight', 1e4);
+		case "boundary"
+			weights(idx) = struct_field_default(constraint_cfg, ...
+				'track_boundary_slack_weight', 1e4);
 		otherwise
 			error('Unknown QP constraint type: %s', constraint_types(idx));
 	end

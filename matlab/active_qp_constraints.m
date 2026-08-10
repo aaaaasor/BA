@@ -1,6 +1,6 @@
 function [A_qp, b_qp, constraint_types] = active_qp_constraints(grad_x, ...
 	integral_bound, terminal_bound, clf_info, hocbf_enabled, obstacle_info, ...
-	grad_x_active)
+	grad_x_active, boundary_info)
 A_qp = [];
 b_qp = [];
 constraint_types = strings(0, 1);
@@ -43,5 +43,15 @@ if nargin >= 6 && ~isempty(obstacle_info) && obstacle_info.enabled && ...
 	A_qp = [A_qp; obstacle_info.A];
 	b_qp = [b_qp; obstacle_info.bounds];
 	constraint_types(end + (1:n_obstacle_rows), 1) = "obstacle";
+end
+
+% Track left/right boundary CBF. Each selected trajectory point contributes
+% one row for the left spline and one for the right spline.
+if nargin >= 8 && ~isempty(boundary_info) && boundary_info.enabled && ...
+		~isempty(boundary_info.A)
+	n_boundary_rows = size(boundary_info.A, 1);
+	A_qp = [A_qp; boundary_info.A];
+	b_qp = [b_qp; boundary_info.bounds];
+	constraint_types(end + (1:n_boundary_rows), 1) = "boundary";
 end
 end

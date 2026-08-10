@@ -12,6 +12,7 @@ semi_axes = zeros(2, 0);
 angles = zeros(1, 0);
 types = strings(1, 0);
 exponents = zeros(1, 0);
+constraint_inflations = zeros(1, 0);
 
 %% Square
 square_cfg = struct_field_default(obstacle, 'square', struct());
@@ -54,12 +55,18 @@ if struct_field_default(square_cfg, 'enabled', true)
     intrusion_depth = 2 * inside_ratio * normal_half_extent;
     center_offset = left_half_width + normal_half_extent - intrusion_depth;
     square_center = centerline_point + center_offset * left_normal;
+    square_center(1) = square_center(1) + ...
+        struct_field_default(square_cfg, 'center_x_offset', 0.0);
+    square_center(2) = square_center(2) + ...
+        struct_field_default(square_cfg, 'center_y_offset', 0.0);
 
     centers(:, end + 1) = square_center;
     semi_axes(:, end + 1) = square_semi_axes;
     angles(end + 1) = square_angle;
     types(end + 1) = "square";
     exponents(end + 1) = square_exponent;
+    constraint_inflations(end + 1) = struct_field_default( ...
+        square_cfg, 'constraint_inflation', 0.0);
 end
 
 %% Ellipse
@@ -93,6 +100,8 @@ if struct_field_default(ellipse_cfg, 'enabled', true)
     angles(end + 1) = ellipse_angle;
     types(end + 1) = "ellipse";
     exponents(end + 1) = 2;
+    constraint_inflations(end + 1) = struct_field_default( ...
+        ellipse_cfg, 'constraint_inflation', 0.0);
 end
 
 %% Fourth-order superellipse inside the corridor
@@ -126,6 +135,8 @@ if struct_field_default(superellipse_cfg, 'enabled', true)
     angles(end + 1) = superellipse_angle;
     types(end + 1) = "superellipse4";
     exponents(end + 1) = exponent;
+    constraint_inflations(end + 1) = struct_field_default( ...
+        superellipse_cfg, 'constraint_inflation', 0.0);
 end
 
 % Preserve the caller's master switch. If no switch was supplied, enabling
@@ -136,4 +147,8 @@ obstacle.semi_axes = semi_axes;
 obstacle.angles = angles;
 obstacle.types = types;
 obstacle.exponents = exponents;
+if any(~isfinite(constraint_inflations)) || any(constraint_inflations < 0)
+    error('Obstacle constraint inflation margins must be finite and nonnegative.');
+end
+obstacle.constraint_inflations = constraint_inflations;
 end

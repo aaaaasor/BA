@@ -1,6 +1,6 @@
 function result = solve_sequential_increment_qp(grad_x, integral_bound, ...
 	terminal_bound, endpoint_infos, hocbf_enabled, obstacle_info, ...
-	grad_x_active, constraint_cfg, t, stats, terminal_info, ...
+	boundary_info, grad_x_active, constraint_cfg, t, stats, terminal_info, ...
 	integral_residual_without_u, terminal_residual_without_u)
 % 第三层增量控制的两级级联：先用 P1/P5 PTCLF 求完整参考控制，再以该
 % reference 为中心求内部点 obstacle PTCBF 的最小安全修正。局部级联完成
@@ -60,6 +60,18 @@ if obstacle_info.enabled && ~isempty(obstacle_info.A)
 	types_all(end + (1:n_obstacle_rows), 1) = "obstacle";
 	owner_all(end + (1:n_obstacle_rows), 1) = ...
 		obstacle_info.row_point_indices(:);
+end
+if boundary_info.enabled && ~isempty(boundary_info.A)
+	n_boundary_rows = size(boundary_info.A, 1);
+	if ~isfield(boundary_info, 'row_point_indices') || ...
+			numel(boundary_info.row_point_indices) ~= n_boundary_rows
+		error('Sequential increment QP requires one point index per boundary row.');
+	end
+	A_all = [A_all; boundary_info.A];
+	b_all = [b_all; boundary_info.bounds];
+	types_all(end + (1:n_boundary_rows), 1) = "boundary";
+	owner_all(end + (1:n_boundary_rows), 1) = ...
+		boundary_info.row_point_indices(:);
 end
 
 ptclf_reference_enabled = struct_field_default(constraint_cfg, ...
@@ -157,8 +169,8 @@ end
 % 第二级 QP：将上一步的 u_ptclf_reference 作为 reference，只求满足
 % 内部点障碍 PTCBF 所需的最小附加修正 Delta u。此处不再加入 P1/P5
 % 的 PTCLF 行，因此安全修正可以改变 P1/P5 的实际收敛速度。
-obstacle_rows = find(types_all == "obstacle");
-if ~isempty(obstacle_rows)
+	safety_rows = find(types_all == "obstacle" | types_all == "boundary");
+if ~isempty(safety_rows)
 	% Let the obstacle PTCBF minimally modify the complete PTCLF reference.
 	% P2/P3/P4 depend on the shared S0 block, so freezing u1 forces the
 	% low-leverage increment blocks to generate unnecessarily large controls.
@@ -169,13 +181,13 @@ if ~isempty(obstacle_rows)
 	else
 		filter_cols = 1:n_u;
 	end
-	A_filter_all = A_all(obstacle_rows, filter_cols);
-	b_filter_all = b_all(obstacle_rows) - ...
-		A_all(obstacle_rows, :) * u_ptclf_reference;
+	A_filter_all = A_all(safety_rows, filter_cols);
+	b_filter_all = b_all(safety_rows) - ...
+		A_all(safety_rows, :) * u_ptclf_reference;
 	active_filter = sqrt(sum(A_filter_all .^ 2, 2)) >= grad_tol;
-	% 梯度退化的障碍行没有一阶控制能力，视为已检查并跳过。
-	row_solved(obstacle_rows(~active_filter)) = true;
-	filter_rows = obstacle_rows(active_filter);
+	% 梯度退化的障碍/边界行没有一阶控制能力，视为已检查并跳过。
+	row_solved(safety_rows(~active_filter)) = true;
+	filter_rows = safety_rows(active_filter);
 	A_filter = A_filter_all(active_filter, :);
 	b_filter = b_filter_all(active_filter);
 	if ~isempty(filter_rows)
@@ -249,13 +261,16 @@ if endpoint_hold_active
 	end
 end
 
-% HOCBF is a post-filter: minimally correct the complete local control
-% vector after all PTCLF/PTCBF blocks have been solved. By design, this
-% filter enforces only the global variance rows; it may temporarily alter
-% the local PTCLF/PTCBF conditions, which take over after the filter ends.
+% HOCBF is the final post-filter.  Re-include the local safety rows in this
+% projection: otherwise the global variance correction can undo the
+% obstacle/boundary correction computed immediately above.  Anchor CLF is
+% intentionally not re-imposed here because it is the performance
+% reference; obstacle and track constraints own final safety priority.
 if ~isempty(global_rows)
-	b_filter = b_all(global_rows) - A_all(global_rows, :) * u;
-	effective_bounds(global_rows) = b_filter;
+	final_filter_rows = [global_rows; safety_rows];
+	b_filter = b_all(final_filter_rows) - ...
+		A_all(final_filter_rows, :) * u;
+	effective_bounds(final_filter_rows) = b_filter;
 	stats_filter = stats;
 	if endpoint_hold_active
 		stats_filter.mu = reshape(stats.mu(:) + u, size(stats.mu));
@@ -263,15 +278,16 @@ if ~isempty(global_rows)
 	[u_filter, exitflag_filter, slack_filter, ~, iterations_filter, ...
 		seconds_filter, contributions_filter, ...
 		equality_filter_contribution] = solve_slack_qp( ...
-		A_all(global_rows, :), b_filter, types_all(global_rows), ...
+		A_all(final_filter_rows, :), b_filter, ...
+		types_all(final_filter_rows), ...
 		constraint_cfg, t, stats_filter, terminal_info, ...
 		integral_residual_without_u, terminal_residual_without_u);
 	u = u + u_filter;
 	endpoint_hold_contribution = endpoint_hold_contribution + ...
 		equality_filter_contribution;
-	slack_all(global_rows) = slack_filter;
-	row_solved(global_rows) = true;
-	row_contributions(global_rows, :) = contributions_filter;
+	slack_all(final_filter_rows) = slack_filter;
+	row_solved(final_filter_rows) = true;
+	row_contributions(final_filter_rows, :) = contributions_filter;
 	exitflag = min(exitflag, exitflag_filter);
 	iterations = iterations + iterations_filter;
 	solve_seconds = solve_seconds + seconds_filter;
