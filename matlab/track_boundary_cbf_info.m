@@ -45,15 +45,14 @@ if isfield(constraint_cfg, 'track_boundary_reference_s_min') && ...
 end
 phase_search_half_steps = struct_field_default(constraint_cfg, ...
     'track_boundary_phase_search_half_steps', 2.0);
-phase_lock_weight = struct_field_default(constraint_cfg, ...
-    'track_boundary_phase_lock_weight', 1.0);
+reference_cache = struct_field_default(constraint_cfg, ...
+    'track_boundary_reference_cache', struct([]));
+if ~isempty(reference_cache) && numel(reference_cache) ~= numel(point_maps)
+    error('Track boundary reference cache count must match point maps.');
+end
 if ~isscalar(phase_search_half_steps) || ~isfinite(phase_search_half_steps) || ...
         phase_search_half_steps <= 0
     error('track_boundary_phase_search_half_steps must be finite and positive.');
-end
-if ~isscalar(phase_lock_weight) || ~isfinite(phase_lock_weight) || ...
-        phase_lock_weight < 0
-    error('track_boundary_phase_lock_weight must be finite and nonnegative.');
 end
 phi0 = struct_field_default(constraint_cfg, ...
     'track_boundary_phi0', 5.0);
@@ -113,8 +112,13 @@ for map_idx = 1:numel(point_maps)
         reference_s_min(map_idx)), eps);
     search_half_width = phase_search_half_steps * 2.0 * ...
         reference_half_width;
-    s_near = branch_locked_center_parameter(p, geometry, s_reference, ...
-        search_half_width, phase_lock_weight);
+    if isempty(reference_cache)
+        s_near = branch_locked_center_parameter(p, geometry, s_reference, ...
+            search_half_width);
+    else
+        s_near = branch_locked_center_parameter_cached(p, geometry, ...
+            reference_cache(map_idx));
+    end
     q_left = evaluate_curve(geometry.curves(1), s_near);
     q_right = evaluate_curve(geometry.curves(2), s_near);
     left_to_right = q_right - q_left;
@@ -163,11 +167,25 @@ for map_idx = 1:numel(point_maps)
 end
 end
 
+function s_near = branch_locked_center_parameter_cached(p, geometry, cache)
+grid_objective = (cache.x_grid - p(1)) .^ 2 + (cache.y_grid - p(2)) .^ 2;
+[~, nearest_idx] = min(grid_objective);
+lo = max(cache.s_min, cache.s_grid(max(nearest_idx - 1, 1)));
+hi = min(cache.s_max, cache.s_grid(min(nearest_idx + 1, numel(cache.s_grid))));
+distance_sq = @(s) (ppval(geometry.center_pp_x, s) - p(1)) .^ 2 + ...
+    (ppval(geometry.center_pp_y, s) - p(2)) .^ 2;
+if hi > lo
+    s_near = fminbnd(distance_sq, lo, hi);
+else
+    s_near = lo;
+end
+end
+
 function s_near = branch_locked_center_parameter(p, geometry, s_reference, ...
-    search_half_width, phase_lock_weight)
-% Locate the closest point on the inherited branch.  Unlike a hard lookup
-% window, the phase prior is part of the objective: its ends are not used as
-% physical corridor faces, while nearby folded branches remain disfavored.
+    search_half_width)
+% Locate the closest centerline point inside the inherited lookup window.
+% The window itself is what keeps a folded track's other branches out; its
+% ends are not used as physical corridor faces.
 s_reference = max(0.0, min(1.0, s_reference));
 s_min = max(0.0, s_reference - search_half_width);
 s_max = min(1.0, s_reference + search_half_width);
@@ -179,27 +197,12 @@ if numel(s_grid) < 2
 end
 x_grid = ppval(geometry.center_pp_x, s_grid);
 y_grid = ppval(geometry.center_pp_y, s_grid);
-local_ds = max(min(1e-3, 0.25 * search_half_width), eps);
-s_lo = max(0.0, s_reference - local_ds);
-s_hi = min(1.0, s_reference + local_ds);
-if s_hi > s_lo
-    local_speed = norm([ ...
-        ppval(geometry.center_pp_x, s_hi) - ...
-            ppval(geometry.center_pp_x, s_lo); ...
-        ppval(geometry.center_pp_y, s_hi) - ...
-            ppval(geometry.center_pp_y, s_lo)]) / (s_hi - s_lo);
-else
-    local_speed = 1.0;
-end
-phase_scale_sq = max(local_speed ^ 2, eps);
-grid_objective = (x_grid - p(1)) .^ 2 + (y_grid - p(2)) .^ 2 + ...
-    phase_lock_weight * phase_scale_sq * (s_grid - s_reference) .^ 2;
+grid_objective = (x_grid - p(1)) .^ 2 + (y_grid - p(2)) .^ 2;
 [~, nearest_idx] = min(grid_objective);
 lo = max(s_min, s_grid(max(nearest_idx - 1, 1)));
 hi = min(s_max, s_grid(min(nearest_idx + 1, numel(s_grid))));
 distance_sq = @(s) (ppval(geometry.center_pp_x, s) - p(1)) .^ 2 + ...
-    (ppval(geometry.center_pp_y, s) - p(2)) .^ 2 + ...
-    phase_lock_weight * phase_scale_sq * (s - s_reference) .^ 2;
+    (ppval(geometry.center_pp_y, s) - p(2)) .^ 2;
 if hi > lo
     s_near = fminbnd(distance_sq, lo, hi);
 else

@@ -9,7 +9,7 @@ cfg.track_dataset_path = fullfile('trajectory_data', 'track_dataset_arena.mat');
 
 %% Training Data
 cfg.n_train = 30;
-cfg.first_level_generation_samples = 5;
+cfg.first_level_generation_samples = 50;
 cfg.first_level_use_tangent_features = true;
 cfg.n_time_slices = 15;
 cfg.first_level_time_steps = 100;
@@ -157,10 +157,14 @@ cfg.obstacle.ellipse.center_x = 0.30;
 cfg.obstacle.ellipse.center_y = 0.96;
 % Semi-major/minor axes relative to the local corridor half-width.
 cfg.obstacle.ellipse.semi_major_ratio = 4.5;
-cfg.obstacle.ellipse.semi_minor_ratio = 2.0;
+% 2.0 时半短轴 0.0408 = 走廊全宽 0.0417 的 98%, 几乎横跨整条走廊, 全靠贴在
+% 右墙上才留出左边一条 0.0109 的缝, 扣掉 1.25 倍膨胀和边界 margin 后只剩
+% 0.0038 —— 三个障碍里最紧的, 而且膨胀已经加不动(上限 0.0039)。
+% 缩到 1.8 后物理缝 0.0149, 可承受膨胀升到 0.0071, 外观差别很小。
+cfg.obstacle.ellipse.semi_minor_ratio = 1.8;
 % Zero aligns the major axis with the local track tangent.
 cfg.obstacle.ellipse.relative_angle = 0.0;
-cfg.obstacle.ellipse.constraint_inflation = 0.003;
+cfg.obstacle.ellipse.constraint_inflation = 0.006;
 
 cfg.obstacle.superellipse.enabled = true;
 cfg.obstacle.superellipse.track_fraction = 0.31;
@@ -170,7 +174,7 @@ cfg.obstacle.superellipse.semi_major_ratio = 2.4;
 cfg.obstacle.superellipse.semi_minor_ratio = 0.35;
 cfg.obstacle.superellipse.relative_angle = 4 * pi / 180;
 cfg.obstacle.superellipse.exponent = 4;
-cfg.obstacle.superellipse.constraint_inflation = 0.003;
+cfg.obstacle.superellipse.constraint_inflation = 0.007;
 
 %% Track Boundary Constraint
 % Master switch. Each left/right boundary is represented by a parametric
@@ -179,7 +183,7 @@ cfg.obstacle.superellipse.constraint_inflation = 0.003;
 % boundary cut across the corridor. The inward
 % side is selected automatically from the track centerline, so the same CBF
 % works on horizontal, vertical, and folded portions of the racing track.
-cfg.track_boundary.enabled = false;
+cfg.track_boundary.enabled = true;
 % Bump when the boundary equation changes so cached rollouts are rebuilt.
 cfg.track_boundary.implementation_version = 13;
 cfg.track_boundary.n_spline_points = 400;
@@ -192,14 +196,14 @@ cfg.track_boundary.phi1_omega = 0.1;
 % Numerical regularization used only when the boundary rows are soft.  A
 % hard boundary deliberately uses the uncapped prescribed-time gain.
 cfg.track_boundary.phi1_tau_min = 0.01;
-cfg.track_boundary.margin = 0.0;
+% margin 进 h 的定义 (h = n'*(p-q) - margin), 等于把走廊两侧各收窄这么多。
+cfg.track_boundary.margin = 0.0033;
 cfg.track_boundary.activation_time = 0.0;
-% Keep the centerline phase inherited from the parent segment, but avoid
-% turning the ends of a small lookup window into artificial boundaries.
-% The closest-point search may move locally along the assigned branch and
-% pays a quadratic phase penalty for moving away from the inherited s.
+% The closest-point search is pure distance minimisation inside a lookup
+% window centred on the phase inherited from the parent segment.  The window
+% is only there to keep a folded track's other branches out of the search;
+% its ends are not physical boundaries and carry no penalty.
 cfg.track_boundary.phase_search_half_steps = 0.5;
-cfg.track_boundary.phase_lock_weight = 0.0;
 % Track containment is a safety condition and therefore remains hard.
 % Performance rows (in particular the second-level anchor CLF) retain
 % slack so that they cannot make the safety QP infeasible.
@@ -252,16 +256,36 @@ cfg.variance_constraint.third_level_track_boundary_enabled = true;
 % P1/P5 are snapped exactly to the safe level-2 anchors at the end.  The
 % third-level boundary filter owns only the newly generated interior points.
 cfg.variance_constraint.third_level_track_boundary_points = [2 3 4];
-cfg.variance_constraint.third_level_track_boundary_phase_search_half_steps = 2.0;
-cfg.variance_constraint.third_level_track_boundary_phase_lock_weight = 1.0;
+% 这个窗口名义上只防折叠赛道选错分支, 但实测这一段赛道任意两处相隔 >= 1 个
+% 点间距的位置空间距离都 >= 2 倍走廊半宽, 根本不折返 —— 窗口在这里的实际作用
+% 是纵向锚定: 点会膨胀到填满给它的任何窗口。3.5 时实测纵向漂移最大 3.2~3.7 个
+% 点间距, 弦长被拉到名义 0.0451 的 2.36 倍 (最长 0.1063)。
+% 发卡弯的几何极限是 d_max = sqrt(8*R_inner*W) = sqrt(8*0.0144*0.0588) = 0.0823:
+% 弦长超过它, 无论端点放哪儿弦都不可能留在走廊内 (所需退让 d^2/(8*R_inner) 已
+% 经超过整条走廊宽度), 加 margin 或约束中点都无解。3.5 时正好有一条 0.0832 的
+% 弦越过这条线。收到 1.5 把漂移压回 ~1.5 个点间距, 弦长随之回落 (3.5 时实测
+% 最大弦长/最大漂移 ≈ 0.64, 按此外推 1.5 下应明显低于 0.0823, 需跑一次确认)。
+% 代价: 窗口重新开始夹住 s_near, h 有失真 —— 但 margin 已从 0.0033 提到 0.008,
+% 覆盖全赛道 97% 的弦所需退让, 比原来靠失真凑数的状态可靠。
+% 1.1 vs 1.5 对照实验(均在 margin=0.008 下): 1.1 边界出界 1 点/2 弦, 1.5 全 0;
+% 两者的障碍穿越完全相同(同样的 seg21 P3-P4 和 seg28 P3-P4, square 穿透深度
+% -0.00909 到小数点后五位一致) —— 避障约束不读这个窗口。1.1 在 margin=0.0033
+% 时代显得更好, 是因为窗口失真在补 margin 的缺口; margin 提到 0.008 后这份
+% 失真变成净负担(发卡弯里保守, 其余 43% 的点是乐观方向)。
+cfg.variance_constraint.third_level_track_boundary_phase_search_half_steps = 1.1;
+cfg.variance_constraint.third_level_track_boundary_activation_time = 0.7;
 % All three levels use a soft-to-hard track-boundary schedule.  In the
 % third-level cascade the boundary joins the obstacle rows in one safety QP.
 cfg.variance_constraint.first_level_track_boundary_slack_enabled = true;
 cfg.variance_constraint.first_level_track_boundary_slack_hard_after_time = 0.50;
 cfg.variance_constraint.second_level_track_boundary_slack_enabled = true;
 cfg.variance_constraint.second_level_track_boundary_slack_hard_after_time = 0.50;
-cfg.variance_constraint.third_level_track_boundary_slack_enabled = true;
-cfg.variance_constraint.third_level_track_boundary_slack_hard_after_time = 0.65;
+% 第三层配合上面的 activation_time = 0.93: 一激活就是硬约束, 没有软阶段。
+% 注意 track_boundary_cbf_info 里 tau 的分支也跟着这个开关走 —— slack 关闭
+% 时用 tau = max(1-t_eff, eps), 最后一步 t_eff 精确等于 1, phi1 = omega/eps^2
+% 约 2e30。只要那一刻还有 h < 0, 该行右端就是 -2e30, 硬约束下必然不可行。
+cfg.variance_constraint.third_level_track_boundary_slack_enabled = false;
+cfg.variance_constraint.third_level_track_boundary_slack_hard_after_time = 0.0;
 cfg.variance_constraint.first_level_integral_uncertainty_budget = 10;
 % First level: all safety/variance constraints enabled; PTCLF remains off.
 cfg.variance_constraint.first_level_hocbf_enabled = true;
@@ -327,14 +351,17 @@ cfg.variance_constraint.second_level_slack_switch_time = 0.65;
 % late-stage feasible set.
 cfg.variance_constraint.second_level_anchor_clf_slack_hard_after_time = inf;
 cfg.variance_constraint.second_level_obstacle_slack_enabled = true;
-% Introduce obstacle guidance while it is still soft, giving trajectories
-% time to enter the joint obstacle/boundary safe set before t=0.85.
+% Let the random flow select a branch before applying late obstacle
+% guidance. The bounded soft window avoids a sudden infeasible intersection
+% with hard track-boundary rows, then restores a hard terminal safety row.
 cfg.variance_constraint.second_level_obstacle_activation_time = 0.93;
+cfg.variance_constraint.second_level_obstacle_activation_times = ...
+    [0.80, 0.93, 0.93]; % square, ellipse, right superellipse
 % 第二层 obstacle PTCBF 的独立 blow-up 增益：仅作用于第二层 h<0 时的
 % phi1=omega/(1-t_eff)^2；不再需要修改三层共用的 cfg.obstacle.phi1_omega。
 cfg.variance_constraint.second_level_obstacle_phi0 = 8.0;
 cfg.variance_constraint.second_level_obstacle_phi1_omega = 0.1;
-cfg.variance_constraint.second_level_obstacle_slack_hard_after_time = 0.85;
+cfg.variance_constraint.second_level_obstacle_slack_hard_after_time = 0.97;
 cfg.variance_constraint.second_level_hocbf_slack_weight = 10;
 cfg.variance_constraint.second_level_obstacle_slack_weight = 10;
 cfg.variance_constraint.second_level_terminal_variance_slack_weight = 10;
@@ -358,7 +385,7 @@ cfg.variance_constraint.third_level_diagnostics = false;
 % and the staged control decomposition, without the full HOCBF diagnostics.
 cfg.variance_constraint.third_level_control_trace_enabled = false;
 cfg.variance_constraint.third_level_ptcbf_enabled = true;
-cfg.variance_constraint.third_level_terminal_variance_ptcbf_end_time = 0.9;
+cfg.variance_constraint.third_level_terminal_variance_ptcbf_end_time = 0.4;
 cfg.variance_constraint.third_level_terminal_variance_beta_final = 6;
 cfg.variance_constraint.third_level_terminal_variance_ptzf_initial_margin = 1.0;
 cfg.variance_constraint.third_level_terminal_variance_ptzf_gamma = 0.6;
@@ -366,7 +393,11 @@ cfg.variance_constraint.third_level_terminal_variance_alpha = 9.0;
 % Continuous endpoint tracking: PTCLF distributes its correction over all
 % increment blocks before the internal obstacle PTCBF stage.
 cfg.variance_constraint.third_level_ptclf_enabled = true;
-cfg.variance_constraint.third_level_closed_form_solver_enabled = true;
+% Use quadprog for the third-level weighted minimum-norm QPs. The former
+% closed-form backend enumerated all 2^n active sets and dominated rollout
+% time once obstacle and track-boundary rows were enabled.
+cfg.variance_constraint.third_level_closed_form_solver_enabled = false;
+cfg.variance_constraint.third_level_qp_warm_start_enabled = false;
 % 串行(增量级联) vs 并行(所有约束进同一个 QP 一次解)。
 cfg.variance_constraint.third_level_sequential_increment_qp_enabled = true;
 cfg.variance_constraint.third_level_sequential_ptclf_reference_enabled = true;
@@ -374,7 +405,7 @@ cfg.variance_constraint.third_level_first_block_control_weight = 40;
 % 实验: 给避障 PTCBF 也加首块权重
 cfg.variance_constraint.third_level_obstacle_first_block_control_weight = 1;
 cfg.variance_constraint.third_level_sequential_ptclf_reference_impl_version = 7;
-cfg.variance_constraint.third_level_hocbf_filter_end_time = 0.9;
+cfg.variance_constraint.third_level_hocbf_filter_end_time = 0.4;
 % 第三层 PTCLF 用 SafeFlow 的 FMBF 构造: Vdot <= -phi(t,V)*V，
 % phi = phi0 (V<=0, 保持) / omega*(1-t_eff)^-2 (V>0, blow-up)。
 % 没有包络，因此不再有 gbar0 / initial_margin。
@@ -403,23 +434,29 @@ cfg.variance_constraint.third_level_anchor_clf_phi0 = 280;
 cfg.variance_constraint.third_level_anchor_clf_endpoint_phi0 = [30; 30];
 cfg.variance_constraint.third_level_anchor_clf_endpoint_phi1_omega = [2.0; 2.0];
 cfg.variance_constraint.third_level_slack_enabled = false;
-cfg.variance_constraint.third_level_hocbf_slack_enabled = true;
+cfg.variance_constraint.third_level_hocbf_slack_enabled = false;
 cfg.variance_constraint.third_level_terminal_variance_slack_enabled = false;
 cfg.variance_constraint.third_level_anchor_clf_slack_enabled = false;
 cfg.variance_constraint.third_level_slack_switch_time = inf;
-cfg.variance_constraint.third_level_anchor_clf_slack_hard_after_time = 0.85;
-cfg.variance_constraint.third_level_obstacle_slack_enabled = false;
-% Start with soft obstacle guidance early enough for random samples to split
-% around both sides; all obstacle rows still become hard at t=0.85.
-cfg.variance_constraint.third_level_obstacle_activation_time = 0.93;
-cfg.variance_constraint.third_level_obstacle_slack_hard_after_time = 0.9;
+cfg.variance_constraint.third_level_anchor_clf_slack_hard_after_time = 0.0;
+cfg.variance_constraint.third_level_obstacle_slack_enabled = true;
+% Start with soft obstacle guidance before restoring hard terminal safety.
+cfg.variance_constraint.third_level_obstacle_activation_time = 0.5;
+% 试过把 superellipse 提前到 0.70(和边界同时), 结果更差: 切入从 1 条变 3 条,
+% 间隙 0.00004 -> 0.00002, 第三层耗时 27.5 -> 44.9 s。原因是障碍和边界性质不同:
+% 边界是全程性的(每个点每一步都受它管), 早开始是让它有时间把整条轨迹拉进走廊,
+% 收益累积; 障碍是局部的, 早开始只是在还离得很远时就施加修正, 把轨迹推向别处,
+% 等真正靠近时反而没余量调整, 而且和边界长时间争同一批自由度。所以保持晚开。
+cfg.variance_constraint.third_level_obstacle_activation_times = ...
+    [0.85, 0.90, 0.93]; % square, ellipse, right superellipse
+cfg.variance_constraint.third_level_obstacle_slack_hard_after_time = 0.97;
 cfg.variance_constraint.third_level_obstacle_slack_weight = 1e4;
 cfg.variance_constraint.third_level_obstacle_phi1_omega = 0.1;
 % 障碍内 h<0 时采用分段增益：前段先弱拉回，等 PTCLF 基本收敛后
 % 再切换到 omega/(1-t_eff)^2 的 blow-up 增益。
 cfg.variance_constraint.third_level_obstacle_phi1_early_gain = 0.05;
 cfg.variance_constraint.third_level_obstacle_phi1_switch_time = 0.70;
-cfg.variance_constraint.third_level_obstacle_phi0 = 5;
+cfg.variance_constraint.third_level_obstacle_phi0 = 8;
 cfg.variance_constraint.third_level_hocbf_slack_weight = 0.001;
 cfg.variance_constraint.third_level_terminal_variance_slack_weight = 1;
 cfg.variance_constraint.third_level_anchor_clf_slack_weight = 5000;

@@ -38,7 +38,7 @@ obstacle_info.n_escape_rows = 0;
 % 让名义 GP 和其它约束先完成初期整形。
 activation_time = struct_field_default(constraint_cfg, ...
     'obstacle_activation_time', 0.0);
-if ~obstacle_info.enabled || t < activation_time
+if ~obstacle_info.enabled
     obstacle_info.enabled = false;
     return;
 end
@@ -55,6 +55,23 @@ else
         'semi_axes', constraint_cfg.obstacle_semi_axes);
 end
 centers = obstacle_geometry.centers;
+n_obs = size(centers, 2);
+activation_times = struct_field_default(constraint_cfg, ...
+    'obstacle_activation_times', activation_time);
+if isscalar(activation_times)
+    activation_times = repmat(activation_times, 1, n_obs);
+else
+    activation_times = reshape(activation_times, 1, []);
+end
+if numel(activation_times) ~= n_obs || ...
+        any(~isfinite(activation_times)) || any(activation_times < 0)
+    error(['obstacle_activation_times must be a finite nonnegative scalar ', ...
+        'or contain one value per obstacle.']);
+end
+if t < min(activation_times)
+    obstacle_info.enabled = false;
+    return;
+end
 phi0 = struct_field_default(constraint_cfg, 'obstacle_phi0', 2.0);
 omega = struct_field_default(constraint_cfg, 'obstacle_phi1_omega', 4.0);
 phi1_early = struct_field_default(constraint_cfg, ...
@@ -84,7 +101,6 @@ phi1 = omega / (tau ^ 2);        % blow-up (h<0 时使用)
 
 x_now = stats.x(:);
 mu = stats.mu(:);
-n_obs = size(centers, 2);
 rows_A = zeros(0, n_u);
 rows_b = zeros(0, 1);
 rows_h = zeros(0, 1);
@@ -95,6 +111,9 @@ for pm_idx = 1:numel(point_maps)
     o = point_maps(pm_idx).o;
     p = M * x_now + o;           % 物理位置 (2x1)
     for obs_idx = 1:n_obs
+        if t < activation_times(obs_idx)
+            continue;
+        end
         [h, grad_h_p, escape_direction] = ...
             obstacle_level_and_gradient(p, obstacle_geometry, obs_idx);
         % The QP and the physical rollout use the same true cumulative map.

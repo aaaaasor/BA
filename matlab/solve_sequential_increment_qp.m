@@ -261,13 +261,32 @@ if endpoint_hold_active
 	end
 end
 
-% HOCBF is the final post-filter.  Re-include the local safety rows in this
-% projection: otherwise the global variance correction can undo the
-% obstacle/boundary correction computed immediately above.  Anchor CLF is
-% intentionally not re-imposed here because it is the performance
-% reference; obstacle and track constraints own final safety priority.
+% HOCBF is the final post-filter.  Which rows it re-imposes switches in time.
+%
+% t <  hocbf_filter_end_time: only the variance rows.  The obstacle/boundary
+%   correction computed one stage above is therefore allowed to be undone by
+%   this projection — early on the variance/learning objective takes priority
+%   and safety is not enforced at the end of the cascade.
+% t >= hocbf_filter_end_time: the variance rows are not generated at all
+%   (see apply_hocbf_integral: hocbf_filter_active), so global_rows is empty
+%   and this whole stage is skipped.  The obstacle/boundary stage is then the
+%   final correction, which is where safety is actually enforced.
+%
+% Anchor CLF is never re-imposed here because it is the performance
+% reference, not a safety condition.
+%
+% 注意这依赖 prescribed-time 的 blow-up 增益在最后一段把违反拉回来。
+% 恢复窗口只有 t 从 hocbf_filter_end_time 到 rollout_t_max 那几步, 而
+% solve_slack_qp 在兜底链失败时会保留一个违反不等式的迭代点, 所以早期被
+% 抵消得越多, 最终越有可能带着违反收尾。验收应以最终轨迹的独立检查为准。
 if ~isempty(global_rows)
-	final_filter_rows = [global_rows; safety_rows];
+	variance_only_filter = t < struct_field_default(constraint_cfg, ...
+		'hocbf_filter_end_time', inf);
+	if variance_only_filter
+		final_filter_rows = global_rows;
+	else
+		final_filter_rows = [global_rows; safety_rows];
+	end
 	b_filter = b_all(final_filter_rows) - ...
 		A_all(final_filter_rows, :) * u;
 	effective_bounds(final_filter_rows) = b_filter;

@@ -245,6 +245,10 @@ if constrained
 		sample_cfg.track_boundary_reference_s_max = ...
 			sample_input.track_boundary_reference_s_max;
 	end
+	if struct_field_default(sample_cfg, 'track_boundary_enabled', false)
+		sample_cfg.track_boundary_reference_cache = ...
+			build_track_boundary_reference_cache(sample_cfg);
+	end
 	if struct_field_default(sample_cfg, 'ptclf_enabled', false) && ...
 			isfield(sample_cfg, 'anchor_clf_target')
 		% 包络式 PTCLF 需要按 sample 的初值 gbar0；SafeFlow 形式没有
