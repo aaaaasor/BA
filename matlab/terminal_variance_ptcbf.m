@@ -31,18 +31,27 @@ hbar0 = constraint_cfg.terminal_variance_ptzf_hbar0;
 gamma = constraint_cfg.terminal_variance_ptzf_gamma;
 alpha_terminal = constraint_cfg.terminal_variance_alpha;
 
-% blow-up time transformation: shape = t_eff/(1-t_eff)。
-% t_eff -> 1 时 shape -> inf，因此 hbar_T -> 0。
-% rollout 实际只能跑到 rollout_t_max (<1)，用 ptzf_time_shift 把这个
-% 实际终点映射到 t_eff=1，使 hbar_T 在 rollout 真正结束时精确收敛到 0，
-% 而不是渐近地趋近于 0。
-time_shift = struct_field_default(constraint_cfg, 'ptzf_time_shift', 0.0);
-t_eff = t + time_shift;
-remaining_tau = max(1.0 - t_eff, eps);
-shape = t_eff ./ remaining_tau;
-shape_dot = remaining_tau .^ (-1.0) + t_eff .* remaining_tau .^ (-2.0);
-ptzf_bound = hbar0 .* exp(-gamma .* shape);
-ptzf_bound_dot = -gamma .* shape_dot .* ptzf_bound;
+% Map physical time to an independent theoretical PTZF clock.  Constraint
+% activation/slack times remain physical and can be tuned separately.
+terminal_time = struct_field_default(constraint_cfg, ...
+	'terminal_variance_ptzf_terminal_time', ...
+	struct_field_default(constraint_cfg, 'rollout_t_max', 1.0));
+if ~(isscalar(terminal_time) && isfinite(terminal_time) && terminal_time > 0)
+	error('terminal_variance_ptzf_terminal_time must be finite and positive.');
+end
+t_eff = t ./ terminal_time;
+if t_eff >= 1.0
+	% Continuous terminal extension: hbar(1)=0 and hbar_dot(1)=0.
+	ptzf_bound = 0.0;
+	ptzf_bound_dot = 0.0;
+else
+	remaining_tau = 1.0 - t_eff;
+	shape = t_eff ./ remaining_tau;
+	% d/dt [tau/(1-tau)] = (1/T)/(1-tau)^2.
+	shape_dot = (1.0 ./ terminal_time) .* remaining_tau .^ (-2.0);
+	ptzf_bound = hbar0 .* exp(-gamma .* shape);
+	ptzf_bound_dot = -gamma .* shape_dot .* ptzf_bound;
+end
 
 % h_terminal = hbar_T - (beta - beta_final)。
 % PTCBF 条件: h_dot + alpha_terminal*h >= 0。

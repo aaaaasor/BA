@@ -25,7 +25,8 @@ try
             struct_field_default(cfg.track_boundary, 'enabled', false)
         cfg.track_boundary.geometry = build_track_boundary_geometry( ...
             track_segment, struct_field_default(cfg.track_boundary, ...
-            'n_spline_points', 400));
+            'n_spline_points', 400), ...
+            struct_field_default(cfg.track_boundary, 'spline_type', 'spline'));
     end
     if ~cfg.first_level_use_tangent_features
         error('Loop expects 20D tangent-feature setup; toggle disabled.');

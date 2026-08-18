@@ -34,11 +34,6 @@ collect_diagnostics = constrained && struct_field_default( ...
 	constraint_cfg, 'diagnostics', false);
 collect_control_trace = constrained && struct_field_default( ...
 	constraint_cfg, 'control_trace_enabled', false);
-if constrained
-	% rollout 实际只能跑到 t1(<1，PTZF公式在t=1处有奇点），把这个映射
-	% 偏移量传给 terminal/CLF，让它们在 t=t1 时把 t_eff 当作精确的 1。
-	constraint_cfg.ptzf_time_shift = max(1.0 - t1, 0.0);
-end
 diagnostics.max_cumulative_variance = 0.0;
 diagnostics.rollout_elapsed_seconds = 0.0; % 初始化 roll-out 时间统计
 
@@ -81,7 +76,8 @@ ctx = struct( ...
 	'constrained', constrained, ...
 	'collect_diagnostics', collect_diagnostics, ...
 	'collect_control_trace', collect_control_trace, ...
-	'terminal_h0_global', terminal_h0_global);
+	'terminal_h0_global', terminal_h0_global, ...
+	'failure_dump_dir', fullfile(fileparts(mfilename('fullpath')), 'outputs'));
 % 将逐样本目标从公共约束中拆出。公共配置只保留所有轨迹都需要的障碍物、
 % 赛道边界、CBF/CLF 和 QP 参数；每条轨迹只携带自己的目标行。
 common_constraint_cfg = constraint_cfg;
@@ -151,6 +147,7 @@ if worker_count > 0
 	% 80 个单轨迹任务由 8 个 worker 持续领取，理想情况下约经历 10 轮。
 	parfor_timer = tic;
 	parfor (sample_idx = 1:n_samples, parfor_opts)
+    % for sample_idx = 1:n_samples
 		[sample_paths{sample_idx}, sample_infos{sample_idx}] = ...
 			rollout_single_sample(model_collection, common_constraint_cfg, ...
 			ctx, sample_inputs{sample_idx});
@@ -181,16 +178,43 @@ end
 %% Collect Per-Sample Results
 sample_diags = cell(n_samples, 1);
 sample_max_cumulative = zeros(n_samples, 1);
+sample_terminal_filter_applied = false(n_samples, 1);
+sample_terminal_filter_initial_violation = zeros(n_samples, 1);
+sample_terminal_filter_final_violation = zeros(n_samples, 1);
+sample_terminal_filter_correction_norm = zeros(n_samples, 1);
 for sample_idx = 1:n_samples
 	path(:, sample_idx, :) = reshape(sample_paths{sample_idx}, ...
 		n_steps + 1, 1, state_dim);
 	sample_diags{sample_idx} = sample_infos{sample_idx}.diag;
 	sample_max_cumulative(sample_idx) = ...
 		sample_infos{sample_idx}.max_cumulative_variance;
+	terminal_filter_info = sample_infos{sample_idx}.terminal_safety_filter;
+	sample_terminal_filter_applied(sample_idx) = terminal_filter_info.applied;
+	sample_terminal_filter_initial_violation(sample_idx) = ...
+		terminal_filter_info.initial_max_violation;
+	sample_terminal_filter_final_violation(sample_idx) = ...
+		terminal_filter_info.final_max_violation;
+	sample_terminal_filter_correction_norm(sample_idx) = ...
+		terminal_filter_info.state_correction_norm;
 end
 diagnostics.max_cumulative_variance = max(sample_max_cumulative);
 diagnostics.hocbf = merge_rollout_diagnostics(sample_diags);
+diagnostics.terminal_safety_filter = struct( ...
+	'corrected_samples', nnz(sample_terminal_filter_applied), ...
+	'total_samples', n_samples, ...
+	'max_initial_violation', max(sample_terminal_filter_initial_violation), ...
+	'max_final_violation', max(sample_terminal_filter_final_violation), ...
+	'max_state_correction_norm', max(sample_terminal_filter_correction_norm));
 diagnostics.rollout_elapsed_seconds = toc(rollout_timer);
+if diagnostics.terminal_safety_filter.corrected_samples > 0
+	fprintf(['  Terminal safety filter corrected %d/%d trajectories ', ...
+		'(max initial violation %.3g, max final violation %.3g, ', ...
+		'max state correction %.3g).\n'], ...
+		diagnostics.terminal_safety_filter.corrected_samples, n_samples, ...
+		diagnostics.terminal_safety_filter.max_initial_violation, ...
+		diagnostics.terminal_safety_filter.max_final_violation, ...
+		diagnostics.terminal_safety_filter.max_state_correction_norm);
+end
 % 只有在开启约束，并且配置里要求输出诊断信息时，才打印 HOCBF 的诊断结果
 if collect_diagnostics
 	print_hocbf_diagnostics(diagnostics.hocbf, ...
@@ -228,8 +252,17 @@ else
 	sample_diag = init_hocbf_diagnostics();
 end
 max_cumulative_variance = 0.0;
+terminal_filter_info = struct( ...
+	'applied', false, ...
+	'initial_max_violation', 0.0, ...
+	'final_max_violation', 0.0, ...
+	'state_correction_norm', 0.0, ...
+	'exitflag', 1, ...
+	'iterations', 0);
 
 sample_cfg = constraint_cfg;
+live_plot_state = initialize_live_rollout_trajectory_plot( ...
+	sample_cfg, sample_idx, x0, times(1), n_steps);
 cumulative_variance_now = 0.0; % 这条 sample 到当前时间为止累计的总方差积分
 if constrained
 	% 将调用端已经切出的当前样本目标挂到公共约束副本上。下游约束函数
@@ -417,6 +450,9 @@ if do_anchor_snap_matrix
 	% obstacle rows through u2/u3/u4, then uses u5 to keep P5 fixed.
 	snap_constraint_cfg_matrix.endpoint_hold_velocity_matrix = snap_matrix;
 end
+% 诊断用: QP 在某一步失败时, 把已经积分完的部分轨迹落盘再把错误原样抛出。
+% 成功的运行一行都不经过 catch, 数值结果完全不受影响。
+% try
 for step_idx = 1:n_steps % 对当前 sample 的每个时间步进行积分
 	dt = dt_vec(step_idx); % 当前步的步长（非均匀网格时逐步不同）
 	t_now = times(step_idx); % 当前时间
@@ -525,12 +561,56 @@ for step_idx = 1:n_steps % 对当前 sample 的每个时间步进行积分
 	if do_anchor_snap && (step_idx + 1) >= snap_path_index
 		sample_path(step_idx + 1, snap_indices) = snap_target;
 	end
+	% Plot the trajectory corresponding to the state just committed above.
+	% This is deliberately after snap-and-hold, so the figure shows the
+	% actual sample_path row that downstream code will consume.
+	x_committed_for_plot = reshape(sample_path(step_idx + 1, :), [], 1);
+	live_plot_state = update_live_rollout_trajectory_plot( ...
+		live_plot_state, sample_cfg, sample_idx, step_idx, n_steps, ...
+		times(step_idx + 1), x_committed_for_plot);
 	% 矩阵型 CLF 的 snap-and-hold: 最小范数投影，把 M*z+offset 精确
 	% 拉回 target，零空间方向（段内其余自由度）不受影响。
 	% Matrix snap is not repeated after RK4. The final operation is
 	% constrained flow matching; its hard endpoint velocity equality keeps
 	% P1/P5 fixed while obstacle PTCBF updates P2/P3/P4.
+	% Update only the soft temporal phase reference after the complete RK4
+	% state is committed. The fixed branch and nominal phase never move.
+	if constrained && struct_field_default(sample_cfg, ...
+			'track_boundary_enabled', false)
+		x_committed = reshape(sample_path(step_idx + 1, :), [], 1);
+		next_boundary_cache = update_track_boundary_branch_cache( ...
+			sample_cfg, x_committed);
+		sample_cfg.track_boundary_reference_cache = next_boundary_cache;
+		snap_constraint_cfg.track_boundary_reference_cache = ...
+			next_boundary_cache;
+		snap_constraint_cfg_matrix.track_boundary_reference_cache = ...
+			next_boundary_cache;
+	end
 end
+% SafeFlow terminal safety filter: the continuous-time PTCBF guides the
+% rollout, then this final projection removes any residual discrete RK4 or
+% QP-tolerance violation. Already-safe terminal states remain unchanged.
+if constrained && struct_field_default(sample_cfg, ...
+		'terminal_safety_filter_enabled', false)
+	[x_terminal_safe, terminal_filter_info] = terminal_safety_filter( ...
+		reshape(sample_path(end, :), [], 1), sample_cfg);
+	sample_path(end, :) = reshape(x_terminal_safe, 1, []);
+end
+% catch rollout_error
+% 	% 失败那一步里已经算出来的 RK4 子步速度一并存下: 崩在 k4 时 k1/k2/k3
+% 	% 仍在作用域内, 这是判断"是外推幅度还是增益切换"最直接的证据。
+% 	stages = struct('dt', [], 't_now', [], 'x_now', [], ...
+% 		'k1', [], 'k2', [], 'k3', []);
+% 	if exist('dt', 'var'), stages.dt = dt; end
+% 	if exist('t_now', 'var'), stages.t_now = t_now; end
+% 	if exist('x_now', 'var'), stages.x_now = x_now; end
+% 	if exist('k1', 'var'), stages.k1 = k1; end
+% 	if exist('k2', 'var'), stages.k2 = k2; end
+% 	if exist('k3', 'var'), stages.k3 = k3; end
+% 	dump_rollout_failure(ctx, sample_idx, step_idx, times, sample_path, ...
+% 		rollout_error, stages);
+% 	rethrow(rollout_error);
+% end
 if collect_diagnostics
 	sample_diag = finalize_hocbf_diagnostics(sample_diag);
 elseif collect_control_trace
@@ -538,5 +618,33 @@ elseif collect_control_trace
 end
 sample_info = struct( ...
 	'diag', sample_diag, ...
-	'max_cumulative_variance', max_cumulative_variance);
+	'max_cumulative_variance', max_cumulative_variance, ...
+	'terminal_safety_filter', terminal_filter_info);
+end
+
+function dump_rollout_failure(ctx, sample_idx, step_idx, times, sample_path, ...
+	rollout_error, stages)
+%DUMP_ROLLOUT_FAILURE 把 QP 失败前已积分的部分轨迹落盘, 供离线诊断。
+% 只在 rollout 抛错的路径上被调用。partial_path 的第 1..step_idx 行是已经
+% 完成的状态, 之后的行未被写入。落盘本身出错时静默返回, 不掩盖原始错误。
+try
+	if ~isfolder(ctx.failure_dump_dir)
+		mkdir(ctx.failure_dump_dir);
+	end
+	failure = struct( ...
+		'sample_idx', sample_idx, ...
+		'failed_step_idx', step_idx, ...
+		'failed_time', times(min(step_idx, numel(times))), ...
+		'completed_steps', step_idx, ...
+		'times', times, ...
+		'partial_path', sample_path, ...
+		'message', rollout_error.message, ...
+		'stages', stages);
+	dump_path = fullfile(ctx.failure_dump_dir, ...
+		sprintf('Rollout_Failure_Sample%03d.mat', sample_idx));
+	save(dump_path, '-struct', 'failure');
+	fprintf('Wrote partial rollout of failed sample %d to %s\n', ...
+		sample_idx, dump_path);
+catch
+end
 end

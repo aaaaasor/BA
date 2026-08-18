@@ -52,8 +52,10 @@ terminal_enabled = terminal_info.enabled;
 clf_info = anchor_clf_info(stats, constraint_cfg, t);
 clf_enabled = clf_info.enabled;
 obstacle_info = obstacle_cbf_info(stats, constraint_cfg, t);
-obstacle_enabled = obstacle_info.enabled;
 boundary_info = track_boundary_cbf_info(stats, constraint_cfg, t);
+[obstacle_info, boundary_info] = joint_safety_softmin_info( ...
+	obstacle_info, boundary_info, stats, constraint_cfg, t);
+obstacle_enabled = obstacle_info.enabled;
 sequential_increment_qp = struct_field_default(constraint_cfg, ...
 	'sequential_increment_qp_enabled', false);
 endpoint_clf_infos = struct([]);

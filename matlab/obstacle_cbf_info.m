@@ -5,8 +5,7 @@ function obstacle_info = obstacle_cbf_info(stats, constraint_cfg, t)
 %   grad  = d h_m / d x = 2 (Q (p_m - c))' M_m      (1 x N)
 %   要求  d h_m/dt + phi(t,h_m)*h_m >= 0,  d h_m/dt = grad*(mu + u)
 %   =>    A = -grad,  bound = grad*mu + phi(t,h_m)*h_m
-% phi 规定时间:  h>=0 -> phi0;  h<0 -> phi1 = omega/(1-t_eff)^2 (blow-up)。
-% t_eff = t + ptzf_time_shift（把 t_max<1 映射到 t_eff=1），与其它 PTZF 约束一致。
+% phi 规定时间: h>=0 -> phi0; h<0 -> phi1=omega/(1-t)^2。
 obstacle_info.enabled = struct_field_default(constraint_cfg, ...
     'obstacle_enabled', false);
 n_u = numel(stats.mu);
@@ -87,16 +86,7 @@ if ~isscalar(phi1_switch_time) || ~isfinite(phi1_switch_time) || ...
 end
 grad_tol = struct_field_default(constraint_cfg, 'grad_tol', 1e-6);
 % 落在椭圆中心驻点上时的逃逸速度(物理单位/时间)。留空则按椭圆短半轴自适应。
-escape_speed = struct_field_default(constraint_cfg, ...
-    'obstacle_escape_speed', []);
-if ~isempty(escape_speed) && ...
-        (~isscalar(escape_speed) || ~isfinite(escape_speed) || ...
-        escape_speed <= 0)
-    error('obstacle_escape_speed must be empty or a finite positive scalar.');
-end
-time_shift = struct_field_default(constraint_cfg, 'ptzf_time_shift', 0.0);
-t_eff = t + time_shift;
-tau = max(1.0 - t_eff, eps);
+tau = max(1.0 - t, eps);
 phi1 = omega / (tau ^ 2);        % blow-up (h<0 时使用)
 
 x_now = stats.x(:);
@@ -114,7 +104,7 @@ for pm_idx = 1:numel(point_maps)
         if t < activation_times(obs_idx)
             continue;
         end
-        [h, grad_h_p, escape_direction] = ...
+        [h, grad_h_p] = ...
             obstacle_level_and_gradient(p, obstacle_geometry, obs_idx);
         % The QP and the physical rollout use the same true cumulative map.
         grad_h_true = grad_h_p' * M;    % 1 x N
@@ -141,6 +131,11 @@ for pm_idx = 1:numel(point_maps)
         obstacle_info.candidate_row_active(candidate_idx, 1) = false;
         obstacle_info.candidate_row_escape(candidate_idx, 1) = false;
         if norm(grad_h_ctrl) < grad_tol
+            % No artificial escape direction: a degenerate first-order
+            % obstacle row is omitted and the nominal flow decides the side.
+            continue;
+        end
+        %{
             % 梯度退化：作用点落在椭圆中心的驻点上。h 的一阶信息为 0，
             % 正常 CBF 行会退化成 0'*u <= 负数(一阶不可行)。原先直接
             % continue，等于恰恰在最危险的地方(h≈-1，已深入障碍内部)
@@ -190,6 +185,7 @@ for pm_idx = 1:numel(point_maps)
             row_is_escape(end + 1, 1) = true;               %#ok<AGROW>
             continue;
         end
+        %}
         obstacle_info.candidate_row_active(candidate_idx, 1) = true;
         obstacle_info.active_candidate_indices(end + 1, 1) = candidate_idx;
         rows_A = [rows_A; -grad_h_ctrl];                    %#ok<AGROW>

@@ -114,12 +114,11 @@ phi0 = struct_field_default(constraint_cfg, 'anchor_clf_phi0', ...
 phi1_omega = struct_field_default(constraint_cfg, 'anchor_clf_phi1_omega', ...
 	struct_field_default(constraint_cfg, 'anchor_clf_ptzf_cg', 0.1));
 if ptzf_enabled && clf_info.v > 0.0
-	% rollout 实际只能跑到 rollout_t_max (<1)，用 ptzf_time_shift 把这个
-	% 实际终点映射到 t_eff=1，使 phi1 在 rollout 真正结束时才发散。
-	time_shift = struct_field_default(constraint_cfg, 'ptzf_time_shift', 0.0);
-	t_eff = t + time_shift;
+	% Independent normalized PTZF clock tau=t/T.
+	terminal_time = anchor_ptzf_terminal_time(constraint_cfg);
+	t_eff = t ./ terminal_time;
 	remaining_tau = max(1.0 - t_eff, eps);
-	phi = phi1_omega ./ (remaining_tau .^ 2.0);
+	phi = (phi1_omega ./ terminal_time) ./ (remaining_tau .^ 2.0);
 else
 	phi = phi0;
 end
@@ -152,16 +151,22 @@ if ptzf_enabled
 		'anchor_clf_ptzf_cg', 0.1);
 	gbar0 = struct_field_default(constraint_cfg, ...
 		'anchor_clf_ptzf_initial_bound', max(clf_info.v, 0.0));
-	% rollout 实际只能跑到 rollout_t_max (<1)，用 ptzf_time_shift 把这个
-	% 实际终点映射到 t_eff=1，使 gbar 在 rollout 真正结束时精确收敛到 0。
-	time_shift = struct_field_default(constraint_cfg, 'ptzf_time_shift', 0.0);
-	t_eff = t + time_shift;
-	remaining_tau = max(1.0 - t_eff, eps);
-	% shape = t_eff / (1-t_eff)，gbar(t) 公式本身不变。
-	shape = t_eff ./ remaining_tau;
-	shape_dot = remaining_tau .^ (-2.0);
-	ptzf_bound = gbar0 .* exp(-ptzf_cg .* shape);
-	ptzf_bound_dot = -ptzf_cg .* shape_dot .* ptzf_bound;
+	% Independent normalized PTZF clock tau=t/T. At tau=1 use the
+	% continuous terminal extension instead of evaluating a zero denominator.
+	terminal_time = anchor_ptzf_terminal_time(constraint_cfg);
+	t_eff = t ./ terminal_time;
+	if t_eff >= 1.0
+		ptzf_bound = 0.0;
+		ptzf_bound_dot = 0.0;
+	else
+		remaining_tau = 1.0 - t_eff;
+		% shape=tau/(1-tau), shape_dot=(1/T)/(1-tau)^2.
+		shape = t_eff ./ remaining_tau;
+		shape_dot = (1.0 ./ terminal_time) .* ...
+			remaining_tau .^ (-2.0);
+		ptzf_bound = gbar0 .* exp(-ptzf_cg .* shape);
+		ptzf_bound_dot = -ptzf_cg .* shape_dot .* ptzf_bound;
+	end
 else
 	ptzf_cg = 0.0;
 	ptzf_bound = 0.0;
@@ -181,4 +186,13 @@ clf_info.cpt = cpt;
 clf_info.phi = nan;
 clf_info.phi0 = nan;
 clf_info.phi1_omega = nan;
+end
+
+function terminal_time = anchor_ptzf_terminal_time(constraint_cfg)
+terminal_time = struct_field_default(constraint_cfg, ...
+	'anchor_clf_ptzf_terminal_time', ...
+	struct_field_default(constraint_cfg, 'rollout_t_max', 1.0));
+if ~(isscalar(terminal_time) && isfinite(terminal_time) && terminal_time > 0)
+	error('anchor_clf_ptzf_terminal_time must be finite and positive.');
+end
 end

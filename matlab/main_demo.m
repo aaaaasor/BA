@@ -1,5 +1,6 @@
 clear;
 clc;
+% close all;
 %% Configuration
 cfg = get_config();
 rng(cfg.random_seed);
@@ -22,7 +23,15 @@ if ~isempty(track_segment)
             struct_field_default(cfg.track_boundary, 'enabled', false)
         cfg.track_boundary.geometry = build_track_boundary_geometry( ...
             track_segment, struct_field_default(cfg.track_boundary, ...
-            'n_spline_points', 400));
+            'n_spline_points', 400), ...
+            struct_field_default(cfg.track_boundary, 'spline_type', 'spline'));
+        if struct_field_default(cfg.output, 'plot_pchip_vs_raw_track', false)
+            plot_pchip_vs_real_track(cfg);
+        end
+        if struct_field_default(cfg.output, ...
+                'plot_first_level_joint_softmin_safe_set', false)
+            plot_first_level_joint_softmin_safe_set(cfg);
+        end
     end
 end
 if isfield(cfg, 'first_level_use_tangent_features') && ...
@@ -100,6 +109,24 @@ if first_rollout_constraint.track_boundary_enabled
         first_rollout_constraint.track_boundary_reference_s_max_targets] = ...
         build_track_boundary_reference_windows(n_eval, 1, n_points_first, ...
         first_rollout_constraint.track_boundary_points);
+end
+if struct_field_default(cfg.output, ...
+        'live_first_level_rk4_trajectory_enabled', false)
+    first_rollout_constraint.live_trajectory_plot_enabled = true;
+    first_rollout_constraint.live_trajectory_plot_sample_indices = ...
+        struct_field_default(cfg.output, ...
+        'live_first_level_rk4_trajectory_sample_indices', 1);
+    first_rollout_constraint.live_trajectory_plot_stride = ...
+        struct_field_default(cfg.output, ...
+        'live_first_level_rk4_trajectory_stride', 1);
+    first_rollout_constraint.live_trajectory_plot_delay = ...
+        struct_field_default(cfg.output, ...
+        'live_first_level_rk4_trajectory_delay', 0.0);
+    first_rollout_constraint.live_trajectory_close_after_save = ...
+        struct_field_default(cfg.output, ...
+        'live_first_level_rk4_trajectory_close_after_save', false);
+    first_rollout_constraint.live_trajectory_track_segment = cfg.track_segment;
+    first_rollout_constraint.live_trajectory_save_enabled = cfg.output.enabled;
 end
 use_first_rollout_cache = false;
 if isfile(first_rollout_cache_path)
@@ -968,16 +995,32 @@ source_points_plot = normalize_tangent_features(source_points_plot);
 reconstructed_points_plot = zeros(0, n_second_level_eval, ...
     size(target_points_dense, 3));
 uncertainty_times = segment_rollout_times;
-disp('Evaluating second-level LoG-GP predictive uncertainty...');
-uncertainty_values = evaluate_rollout_uncertainty(segment_model_collection, ...
-    segment_rollout_times, segment_traj_path_10d);
 uncertainty_signal_std_vec = segment_gp.signal_std_vec;
-print_uncertainty_sigma_diagnostic('Second-level', uncertainty_values);
+second_uncertainty_enabled = struct_field_default(cfg.output, ...
+    'second_level_uncertainty_enabled', true);
+if isfield(cfg, 'enable_third_level') && cfg.enable_third_level
+    % Third-level construction uses the final second-level anchor states,
+    % not this diagnostic uncertainty tensor. Skip 400 redundant GP
+    % evaluations; third-level uncertainty is evaluated after its rollout.
+    uncertainty_values = [];
+    disp(['Skipping second-level rollout uncertainty diagnostics because ', ...
+        'third-level rollout is enabled.']);
+elseif ~second_uncertainty_enabled
+    uncertainty_values = [];
+    disp(['Skipping second-level rollout uncertainty diagnostics because ', ...
+        'cfg.output.second_level_uncertainty_enabled is false.']);
+else
+    disp('Evaluating second-level LoG-GP predictive uncertainty...');
+    uncertainty_values = evaluate_rollout_uncertainty( ...
+        segment_model_collection, segment_rollout_times, ...
+        segment_traj_path_10d);
+    print_uncertainty_sigma_diagnostic('Second-level', uncertainty_values);
+end
 
 % 与第一层采用相同的归一化方式比较避障前后的预测不确定性：
 % 每个输出维度先除以本维 GP 的先验方差 SigmaF_i^2，再对所有输出维度
 % 取均方根。第二层每条曲线对应一个 5 点 segment rollout。
-if show_second_level_obstacle_figures && ...
+if second_uncertainty_enabled && show_second_level_obstacle_figures && ...
         ~isempty(no_obstacle_segment_traj_path_10d)
     disp(['Evaluating second-level predictive variance for ', ...
         'before/after obstacle comparison...']);
@@ -1406,6 +1449,27 @@ if isfield(cfg, 'enable_third_level') && cfg.enable_third_level
         disp(['Saved cached third-level rollout: ', third_rollout_cache_path]);
     end
 
+    % Generate the requested HOCBF psi1, HOCBF psi2, and terminal PTCBF h
+    % time traces without enabling full diagnostics for all third-level
+    % samples.  The selected sample is re-run serially with the same model,
+    % initial state, constraints, time grid, and refinement configuration.
+    if struct_field_default(cfg, ...
+            'third_level_cbf_trace_plot_enabled', true)
+        cbf_trace_sample_idx = struct_field_default(cfg, ...
+            'third_level_cbf_trace_sample_idx', 4);
+        try
+            plot_cbf_time_traces_for_sample(cfg, ...
+                third_segment_model_collection, third_segment_x_init, ...
+                cfg.t_min, third_level_rollout_t_max, ...
+                third_level_time_steps, third_segment_variance_constraint, ...
+                third_level_refine_cfg, cbf_trace_sample_idx);
+        catch cbf_trace_error
+            warning('main_demo:CBFTracePlotFailed', ...
+                'Could not generate HOCBF/PTCBF time traces: %s', ...
+                cbf_trace_error.message);
+        end
+    end
+
     % Third-level before/after experiment. Both runs inherit the exact same
     % safe second-level anchors, increment initial state, HOCBF, PTCLF,
     % integration grid, and random seed. Only obstacle PTCBF is disabled in
@@ -1771,12 +1835,20 @@ if isfield(cfg, 'enable_third_level') && cfg.enable_third_level
     disp(['Third-level diverged sample count: ', ...
         num2str(third_level_diverged_sample_count)]);
 
-    disp('Evaluating third-level LoG-GP predictive uncertainty...');
-    uncertainty_values = evaluate_rollout_uncertainty( ...
-        third_segment_model_collection, third_rollout_times, ...
-        third_traj_path_10d);
     uncertainty_signal_std_vec = third_segment_gp.signal_std_vec;
-    print_uncertainty_sigma_diagnostic('Third-level', uncertainty_values);
+    third_uncertainty_enabled = struct_field_default(cfg.output, ...
+        'third_level_uncertainty_enabled', true);
+    if third_uncertainty_enabled
+        disp('Evaluating third-level LoG-GP predictive uncertainty...');
+        uncertainty_values = evaluate_rollout_uncertainty( ...
+            third_segment_model_collection, third_rollout_times, ...
+            third_traj_path_10d);
+        print_uncertainty_sigma_diagnostic('Third-level', ...
+            uncertainty_values);
+    else
+        uncertainty_values = [];
+        disp('Skipping third-level rollout uncertainty evaluation.');
+    end
 
     % Plot the obstacle CBF values recorded by the constrained third-level
     % rollout. Each trace is the minimum over constrained local points and
@@ -1883,7 +1955,8 @@ if isfield(cfg, 'enable_third_level') && cfg.enable_third_level
     % Compare uncertainty with identical third-level settings. The baseline
     % differs only by disabling obstacle PTCBF. Normalize each output by its
     % own GP prior variance before taking the RMS over output dimensions.
-    if ~isempty(third_no_obstacle_traj_path_10d)
+    if third_uncertainty_enabled && ...
+            ~isempty(third_no_obstacle_traj_path_10d)
         disp(['Evaluating third-level predictive variance for ', ...
             'before/after obstacle comparison...']);
         third_no_obstacle_uncertainty = evaluate_rollout_uncertainty( ...
@@ -2037,6 +2110,14 @@ plot_cfg.anchor_target_points = second_level_anchor_points;
 plot_cfg.segment_plot_data = final_segment_endpoints;
 plot_cfg.segment_plot_count = n_generation_segments;
 plot_cfg.segment_plot_points_per_segment = cfg.segment_points_per_segment;
+% Stage 2 is a coarse scaffold whose long chords are replaced by stage 3.
+% Filter it by generated-point safety only. Stage 3 is the delivered
+% polyline, so every complete chord must be obstacle-free.
+if is_third_level_plot
+    plot_cfg.obstacle_filter_mode = 'polyline';
+else
+    plot_cfg.obstacle_filter_mode = 'points';
+end
 show_rollout_markers = true;
 if isfield(cfg, 'output')
     show_rollout_markers = struct_field_default( ...
