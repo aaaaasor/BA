@@ -113,12 +113,34 @@ phi0 = struct_field_default(constraint_cfg, 'anchor_clf_phi0', ...
 	struct_field_default(constraint_cfg, 'anchor_clf_cpt', 1.0));
 phi1_omega = struct_field_default(constraint_cfg, 'anchor_clf_phi1_omega', ...
 	struct_field_default(constraint_cfg, 'anchor_clf_ptzf_cg', 0.1));
+phi1_early_gain = struct_field_default(constraint_cfg, ...
+	'anchor_clf_phi1_early_gain', 0.0);
+if ~(isscalar(phi1_early_gain) && isfinite(phi1_early_gain) && ...
+		phi1_early_gain >= 0.0)
+	error('anchor_clf_phi1_early_gain must be finite and nonnegative.');
+end
+phi1_switch_time = struct_field_default(constraint_cfg, ...
+	'anchor_clf_phi1_switch_time', 0.0);
+if ~(isscalar(phi1_switch_time) && isfinite(phi1_switch_time) && ...
+		phi1_switch_time >= 0.0 && phi1_switch_time < 1.0)
+	error('anchor_clf_phi1_switch_time must lie in [0, 1).');
+end
+phi1_max = struct_field_default(constraint_cfg, ...
+	'anchor_clf_phi1_max', inf);
+if ~(isscalar(phi1_max) && isnumeric(phi1_max) && ...
+		~isnan(phi1_max) && phi1_max > 0.0)
+	error('anchor_clf_phi1_max must be positive or inf.');
+end
 if ptzf_enabled && clf_info.v > 0.0
-	% Independent normalized PTZF clock tau=t/T.
-	terminal_time = anchor_ptzf_terminal_time(constraint_cfg);
-	t_eff = t ./ terminal_time;
-	remaining_tau = max(1.0 - t_eff, eps);
-	phi = (phi1_omega ./ terminal_time) ./ (remaining_tau .^ 2.0);
+	if t < phi1_switch_time
+		phi = phi1_early_gain;
+	else
+		% The prescribed-time clock has theoretical terminal time t=1.
+		% rollout_t_max only stops the numerical rollout and must not rescale time.
+		remaining_time = max(1.0 - t, eps);
+		phi = phi1_omega ./ (remaining_time .^ 2.0);
+	end
+	phi = min(phi, phi1_max);
 else
 	phi = phi0;
 end
@@ -129,6 +151,9 @@ clf_info.residual_without_u = -clf_info.bound;
 clf_info.phi = phi;
 clf_info.phi0 = phi0;
 clf_info.phi1_omega = phi1_omega;
+clf_info.phi1_early_gain = phi1_early_gain;
+clf_info.phi1_switch_time = phi1_switch_time;
+clf_info.phi1_max = phi1_max;
 % 保留下列字段只为兼容既有诊断/绘图管线。新构造里没有包络，恒为 0。
 clf_info.ptzf_bound = 0.0;
 clf_info.ptzf_bound_dot = 0.0;

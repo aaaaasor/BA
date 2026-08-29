@@ -8,18 +8,31 @@ input_dim = x_dim + 1;
 hyperparameter_mat_path = string(gp.hyperparameter_mat_path);
 if strlength(hyperparameter_mat_path) > 0 && isfile(hyperparameter_mat_path)
     fprintf('Loading saved hyperparameters: %s\n', hyperparameter_mat_path);
-    saved_params = load(hyperparameter_mat_path, ...
-        'SigmaF', 'SigmaL', 'SigmaN');
-    cache_matches_dims = isequal(size(saved_params.SigmaL), ...
+    % Load the small hyperparameter cache as a struct, then inspect optional
+    % metadata. Requesting a field that old caches do not contain makes
+    % MATLAB emit an unnecessary "Variable not found" warning.
+    saved_params = load(hyperparameter_mat_path);
+    requested_signature = struct_field_default(gp, ...
+        'hyperparameter_cache_signature', []);
+    cache_has_parameters = isfield(saved_params, 'SigmaL') && ...
+        isfield(saved_params, 'SigmaF') && ...
+        isfield(saved_params, 'SigmaN');
+    cache_matches_dims = cache_has_parameters && ...
+        isequal(size(saved_params.SigmaL), ...
         [input_dim, y_dim]) && numel(saved_params.SigmaF) == y_dim && ...
         numel(saved_params.SigmaN) == y_dim;
-    if cache_matches_dims
+    cache_matches_signature = isempty(requested_signature) || ...
+        (isfield(saved_params, 'HyperparameterCacheSignature') && ...
+        isequaln(saved_params.HyperparameterCacheSignature, ...
+        requested_signature));
+    if cache_matches_dims && cache_matches_signature
         gp.length_scale_mat = saved_params.SigmaL;
         gp.signal_std_vec = saved_params.SigmaF(:)';
         gp.noise_std_vec = saved_params.SigmaN(:)';
         return;
     end
-    disp('Ignoring saved hyperparameters because dimensions changed.');
+    disp(['Ignoring saved hyperparameters because dimensions or the ', ...
+        'training-time grid changed.']);
 end
 %% Flatten Flow-Matching Training Pairs
 X = reshape(x_slices, [], x_dim);
@@ -61,7 +74,10 @@ if strlength(hyperparameter_mat_path) > 0
     SigmaL = gp.length_scale_mat;
     SigmaF = gp.signal_std_vec;
     SigmaN = gp.noise_std_vec;
-    save(hyperparameter_mat_path, 'SigmaF', 'SigmaL', 'SigmaN');
+    HyperparameterCacheSignature = struct_field_default(gp, ...
+        'hyperparameter_cache_signature', []);
+    save(hyperparameter_mat_path, 'SigmaF', 'SigmaL', 'SigmaN', ...
+        'HyperparameterCacheSignature');
     fprintf('Saved hyperparameters: %s\n', hyperparameter_mat_path);
 end
 end

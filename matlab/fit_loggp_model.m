@@ -66,6 +66,26 @@ model_collection = build_model_collection(output_models, ...
 model_collection.training_accuracy_threshold = training_accuracy_threshold;
 model_collection.per_output_training_threshold = per_output_training_threshold;
 model_collection.o_ratio = struct_field_default(gp, 'o_ratio', 1/10);
+if isfield(gp, 'length_scale_time_endpoint_enabled') && ...
+        gp.length_scale_time_endpoint_enabled
+    model_collection.length_scale_time_endpoint_enabled = true;
+    model_collection.length_scale_time_start_mat = ...
+        gp.length_scale_time_start_mat;
+    model_collection.length_scale_time_end_mat = ...
+        gp.length_scale_time_end_mat;
+    model_collection.length_scale_time_endpoint_power = ...
+        struct_field_default(gp, 'length_scale_time_endpoint_power', 1.0);
+end
+% Record the scalar time schedule and the kernel scales so a cached model
+% is not silently reused after any of them changes.
+model_collection.length_scale_time_varying = struct_field_default(gp, ...
+    'length_scale_time_varying', false);
+model_collection.length_scale_time_scale_start = struct_field_default(gp, ...
+    'length_scale_time_scale_start', 1.0);
+model_collection.length_scale_time_scale_end = struct_field_default(gp, ...
+    'length_scale_time_scale_end', 1.0);
+model_collection.signal_std_vec = gp.signal_std_vec;
+model_collection.noise_std_vec = gp.noise_std_vec;
 if isfield(gp, 'training_sample_order')
     model_collection.training_sample_order = gp.training_sample_order;
 end

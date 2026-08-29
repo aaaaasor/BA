@@ -1,6 +1,6 @@
 function [A_qp, b_qp, constraint_types] = active_qp_constraints(grad_x, ...
 	integral_bound, terminal_bound, clf_info, hocbf_enabled, obstacle_info, ...
-	grad_x_active, boundary_info)
+	grad_x_active, boundary_info, terminal_info)
 A_qp = [];
 b_qp = [];
 constraint_types = strings(0, 1);
@@ -20,7 +20,19 @@ end
 
 % 第 2 行: terminal PTCBF。如果 terminal 未启用，bound 为 inf，则不加入。
 % terminal PTCBF 和 HOCBF 使用同一个 grad_beta，但右端 bound 不同。
-if isfinite(terminal_bound) && grad_x_active
+if nargin >= 9 && ~isempty(terminal_info) && ...
+		struct_field_default(terminal_info, 'per_dimension', false) && ...
+		grad_x_active
+	% One row per GP output instead of a single row on the summed
+	% sigma^2.  Rows with a degenerate gradient carry no first-order
+	% control authority and are skipped, as for the aggregated row.
+	A_dim = terminal_info.rows_A;
+	b_dim = terminal_info.rows_bound;
+	keep = sqrt(sum(A_dim .^ 2, 2)) >= grad_tol_for_rows(A_dim);
+	A_qp = [A_qp; A_dim(keep, :)];
+	b_qp = [b_qp; b_dim(keep)];
+	constraint_types(end + (1:nnz(keep)), 1) = "terminal";
+elseif isfinite(terminal_bound) && grad_x_active
 	A_qp = [A_qp; grad_x];
 	b_qp = [b_qp; terminal_bound];
 	constraint_types(end + 1, 1) = "terminal";
@@ -54,4 +66,10 @@ if nargin >= 8 && ~isempty(boundary_info) && boundary_info.enabled && ...
 	b_qp = [b_qp; boundary_info.bounds];
 	constraint_types(end + (1:n_boundary_rows), 1) = "boundary";
 end
+end
+
+function tol = grad_tol_for_rows(A)
+% Same spirit as grad_tol for the aggregated row: drop rows whose
+% gradient is numerically zero so they cannot make the QP infeasible.
+tol = 1e-12 .* max(1, max(abs(A), [], 'all'));
 end

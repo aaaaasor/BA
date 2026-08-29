@@ -34,6 +34,8 @@ collect_diagnostics = constrained && struct_field_default( ...
 	constraint_cfg, 'diagnostics', false);
 collect_control_trace = constrained && struct_field_default( ...
 	constraint_cfg, 'control_trace_enabled', false);
+capture_sample_failures = constrained && struct_field_default( ...
+	constraint_cfg, 'seed_filter_reject_failed_rollouts', false);
 diagnostics.max_cumulative_variance = 0.0;
 diagnostics.rollout_elapsed_seconds = 0.0; % 初始化 roll-out 时间统计
 
@@ -53,12 +55,27 @@ if constrained
 		beta_final = constraint_cfg.terminal_variance_beta_final;
 		terminal_margin = struct_field_default(constraint_cfg, ...
 			'terminal_variance_ptzf_initial_margin', 1e-6);
-		terminal_h0_global = max(max(beta0_values) - beta_final, 0.0) + ...
-			terminal_margin;
+		fixed_terminal_h0 = struct_field_default(constraint_cfg, ...
+			'terminal_variance_ptzf_hbar0_fixed', []);
+		if isempty(fixed_terminal_h0)
+			terminal_h0_global = max(max(beta0_values) - beta_final, 0.0) + ...
+				terminal_margin;
+		else
+			if ~isscalar(fixed_terminal_h0) || ~isfinite(fixed_terminal_h0) || ...
+					fixed_terminal_h0 < 0
+				error(['terminal_variance_ptzf_hbar0_fixed must be a finite ', ...
+					'nonnegative scalar.']);
+			end
+			terminal_h0_global = fixed_terminal_h0;
+		end
 		constraint_cfg.terminal_variance_ptzf_hbar0 = terminal_h0_global;
-		fprintf(['  terminal global hbar0=%.3f from max beta0=%.3f, ', ...
-			'beta_final=%.3f, margin=%.3g\n'], terminal_h0_global, ...
-			max(beta0_values), beta_final, terminal_margin);
+		fixed_label = '';
+		if ~isempty(fixed_terminal_h0)
+			fixed_label = ' (fixed)';
+		end
+		fprintf(['  terminal global hbar0=%.3f, max beta0=%.3f, ', ...
+			'beta_final=%.3f, margin=%.3g%s\n'], terminal_h0_global, ...
+			max(beta0_values), beta_final, terminal_margin, fixed_label);
 	end
 end
 
@@ -76,6 +93,7 @@ ctx = struct( ...
 	'constrained', constrained, ...
 	'collect_diagnostics', collect_diagnostics, ...
 	'collect_control_trace', collect_control_trace, ...
+	'capture_sample_failures', capture_sample_failures, ...
 	'terminal_h0_global', terminal_h0_global, ...
 	'failure_dump_dir', fullfile(fileparts(mfilename('fullpath')), 'outputs'));
 % 将逐样本目标从公共约束中拆出。公共配置只保留所有轨迹都需要的障碍物、
@@ -129,6 +147,12 @@ end
 % 检查/建立并行池并返回实际 worker 数。返回 0 表示并行关闭、工具箱不可用、
 % 建池失败后回退串行，或任务数不超过 1；此时执行下面的普通 for 分支。
 worker_count = ensure_parallel_pool(parallel_cfg, n_samples);
+if worker_count > 0 && constrained && struct_field_default( ...
+		constraint_cfg, 'live_trajectory_plot_enabled', false)
+	fprintf(['  Live trajectory animation enabled; running rollout ', ...
+		'serially so all samples share one ordered figure.\n']);
+	worker_count = 0;
+end
 % parfor 不能让多个 worker 任意扩展同一个输出数组，因此先按 sample 数预分配。
 % 下面两个量都只在各自的 sample_idx 位置写入，MATLAB 可将其识别为切片变量；
 % 不同 worker 不会写同一位置，所以无需锁或其它同步机制。
@@ -148,9 +172,17 @@ if worker_count > 0
 	parfor_timer = tic;
 	parfor (sample_idx = 1:n_samples, parfor_opts)
     % for sample_idx = 1:n_samples
-		[sample_paths{sample_idx}, sample_infos{sample_idx}] = ...
-			rollout_single_sample(model_collection, common_constraint_cfg, ...
-			ctx, sample_inputs{sample_idx});
+		try
+			[sample_paths{sample_idx}, sample_infos{sample_idx}] = ...
+				rollout_single_sample(model_collection, common_constraint_cfg, ...
+				ctx, sample_inputs{sample_idx});
+		catch rollout_error
+			if ~capture_sample_failures
+				rethrow(rollout_error);
+			end
+			sample_paths{sample_idx} = nan(n_steps + 1, state_dim);
+			sample_infos{sample_idx} = failed_sample_info(rollout_error);
+		end
 	end
 	toc(parfor_timer);
 	% parfor 的 end 是同步点：主 MATLAB 会等待所有 worker 完成并回传结果，
@@ -160,16 +192,38 @@ else
 	% 并行不可用时调用完全相同的单轨迹函数，确保串行/并行数学逻辑一致。
 	% 串行分支额外每 10 条轨迹打印一次批次耗时；并行分支当前不打印中间进度。
 	batch_timer = tic; % 每隔10个sample打印一次进度时，用来显示这一批花了多少秒
-	for sample_idx = 1:n_samples
-		[sample_paths{sample_idx}, sample_infos{sample_idx}] = ...
-			rollout_single_sample(model_collection, common_constraint_cfg, ...
-			ctx, sample_inputs{sample_idx});
-		if mod(sample_idx, 10) == 0 || sample_idx == n_samples
+	serial_sample_order = 1:n_samples;
+	if constrained && struct_field_default(constraint_cfg, ...
+			'live_trajectory_plot_enabled', false) && ...
+			struct_field_default(constraint_cfg, ...
+			'live_trajectory_targets_first', false)
+		requested_samples = struct_field_default(constraint_cfg, ...
+			'live_trajectory_plot_sample_indices', zeros(1, 0));
+		requested_samples = unique(round(requested_samples(:)'), 'stable');
+		requested_samples = requested_samples(requested_samples >= 1 & ...
+			requested_samples <= n_samples);
+		serial_sample_order = [requested_samples, ...
+			setdiff(serial_sample_order, requested_samples, 'stable')];
+	end
+	for serial_position = 1:n_samples
+		sample_idx = serial_sample_order(serial_position);
+		try
+			[sample_paths{sample_idx}, sample_infos{sample_idx}] = ...
+				rollout_single_sample(model_collection, common_constraint_cfg, ...
+				ctx, sample_inputs{sample_idx});
+		catch rollout_error
+			if ~capture_sample_failures
+				rethrow(rollout_error);
+			end
+			sample_paths{sample_idx} = nan(n_steps + 1, state_dim);
+			sample_infos{sample_idx} = failed_sample_info(rollout_error);
+		end
+		if mod(serial_position, 10) == 0 || serial_position == n_samples
 			batch_elapsed = toc(batch_timer);
 			total_elapsed = toc(rollout_timer);
 			fprintf(['  RK4 rolled out %d / %d samples ', ...
 				'(batch %.1fs, total %.1fs)...\n'], ...
-				sample_idx, n_samples, batch_elapsed, total_elapsed);
+				serial_position, n_samples, batch_elapsed, total_elapsed);
 			batch_timer = tic;
 		end
 	end
@@ -182,9 +236,20 @@ sample_terminal_filter_applied = false(n_samples, 1);
 sample_terminal_filter_initial_violation = zeros(n_samples, 1);
 sample_terminal_filter_final_violation = zeros(n_samples, 1);
 sample_terminal_filter_correction_norm = zeros(n_samples, 1);
+sample_failed = false(n_samples, 1);
+sample_failure_identifiers = repmat({''}, n_samples, 1);
+sample_failure_messages = repmat({''}, n_samples, 1);
 for sample_idx = 1:n_samples
 	path(:, sample_idx, :) = reshape(sample_paths{sample_idx}, ...
 		n_steps + 1, 1, state_dim);
+	if struct_field_default(sample_infos{sample_idx}, 'failed', false)
+		sample_failed(sample_idx) = true;
+		sample_failure_identifiers{sample_idx} = ...
+			sample_infos{sample_idx}.failure_identifier;
+		sample_failure_messages{sample_idx} = ...
+			sample_infos{sample_idx}.failure_message;
+		continue;
+	end
 	sample_diags{sample_idx} = sample_infos{sample_idx}.diag;
 	sample_max_cumulative(sample_idx) = ...
 		sample_infos{sample_idx}.max_cumulative_variance;
@@ -206,6 +271,14 @@ diagnostics.terminal_safety_filter = struct( ...
 	'max_final_violation', max(sample_terminal_filter_final_violation), ...
 	'max_state_correction_norm', max(sample_terminal_filter_correction_norm));
 diagnostics.rollout_elapsed_seconds = toc(rollout_timer);
+diagnostics.failed_sample_mask = sample_failed;
+diagnostics.failed_sample_identifiers = sample_failure_identifiers;
+diagnostics.failed_sample_messages = sample_failure_messages;
+diagnostics.failed_sample_count = nnz(sample_failed);
+if diagnostics.failed_sample_count > 0
+	fprintf(['  Captured %d/%d failed rollout samples for deterministic ', ...
+		'seed rejection.\n'], diagnostics.failed_sample_count, n_samples);
+end
 if diagnostics.terminal_safety_filter.corrected_samples > 0
 	fprintf(['  Terminal safety filter corrected %d/%d trajectories ', ...
 		'(max initial violation %.3g, max final violation %.3g, ', ...
@@ -222,6 +295,13 @@ if collect_diagnostics
 		struct_field_default(constraint_cfg, ...
 		'closed_form_solver_enabled', false));
 end
+end
+
+function info = failed_sample_info(rollout_error)
+info = struct( ...
+	'failed', true, ...
+	'failure_identifier', rollout_error.identifier, ...
+	'failure_message', rollout_error.message);
 end
 %%
 % 单条轨迹的完整 RK4 积分。所有 sample 共享的量通过 ctx 传入，per-sample 的
@@ -369,6 +449,10 @@ do_anchor_snap = constrained && snap_flow_steps > 0 && ...
 	isfield(sample_cfg, 'anchor_clf_indices') && ...
 	isfield(sample_cfg, 'anchor_clf_target');
 snap_path_index = n_steps + 1 - snap_flow_steps;
+snap_start_time = inf;
+if snap_flow_steps > 0
+	snap_start_time = times(snap_path_index);
+end
 snap_indices = [];
 snap_target = [];
 snap_constraint_cfg = sample_cfg;
@@ -468,18 +552,14 @@ for step_idx = 1:n_steps % 对当前 sample 的每个时间步进行积分
 		x_now = x_now + snap_projector * snap_rhs;
 		sample_path(step_idx, :) = reshape(x_now, 1, []);
 	end
-	% snap 区（最后 snap_flow_steps 步）用无 PTCLF、仅 HOCBF/PTCBF 软约束。
-	if do_anchor_snap && step_idx >= snap_path_index
-		active_constraint_cfg = snap_constraint_cfg;
-	elseif do_anchor_snap_matrix && step_idx >= snap_path_index
-		active_constraint_cfg = snap_constraint_cfg_matrix;
-	else
-		active_constraint_cfg = sample_cfg;
-	end
 	%% k1
 	if constrained
+		stage_constraint_cfg = rk_stage_constraint_cfg(t_now, ...
+			snap_start_time, sample_cfg, snap_constraint_cfg, ...
+			snap_constraint_cfg_matrix, do_anchor_snap, ...
+			do_anchor_snap_matrix);
 		[k1, hocbf_info] = constrained_velocity_field(model_collection, ...
-			t_now, x_now, active_constraint_cfg, cumulative_variance_now, []);
+			t_now, x_now, stage_constraint_cfg, cumulative_variance_now, []);
 		q1 = hocbf_info.sigma2; % 当前 RK4 子步 k1 位置的瞬时方差值
 		if collect_diagnostics
 			sample_diag = update_hocbf_diagnostics( ...
@@ -496,8 +576,13 @@ for step_idx = 1:n_steps % 对当前 sample 的每个时间步进行积分
 	x_k2 = x_now + 0.5 * dt * k1;
 	t_k2 = t_now + 0.5 * dt;
 	if constrained
+		stage_constraint_cfg = rk_stage_constraint_cfg(t_k2, ...
+			snap_start_time, sample_cfg, snap_constraint_cfg, ...
+			snap_constraint_cfg_matrix, do_anchor_snap, ...
+			do_anchor_snap_matrix);
 		[k2, hocbf_info] = constrained_velocity_field(model_collection, ...
-			t_k2, x_k2, active_constraint_cfg, cumulative_variance_now + 0.5 * dt * q1, []);
+			t_k2, x_k2, stage_constraint_cfg, ...
+			cumulative_variance_now + 0.5 * dt * q1, []);
 		q2 = hocbf_info.sigma2;
 		if collect_diagnostics
 			sample_diag = update_hocbf_diagnostics( ...
@@ -514,8 +599,13 @@ for step_idx = 1:n_steps % 对当前 sample 的每个时间步进行积分
 	x_k3 = x_now + 0.5 * dt * k2;
 	t_k3 = t_now + 0.5 * dt;
 	if constrained
+		stage_constraint_cfg = rk_stage_constraint_cfg(t_k3, ...
+			snap_start_time, sample_cfg, snap_constraint_cfg, ...
+			snap_constraint_cfg_matrix, do_anchor_snap, ...
+			do_anchor_snap_matrix);
 		[k3, hocbf_info] = constrained_velocity_field(model_collection, ...
-			t_k3, x_k3, active_constraint_cfg, cumulative_variance_now + 0.5 * dt * q2, []);
+			t_k3, x_k3, stage_constraint_cfg, ...
+			cumulative_variance_now + 0.5 * dt * q2, []);
 		q3 = hocbf_info.sigma2;
 		if collect_diagnostics
 			sample_diag = update_hocbf_diagnostics( ...
@@ -532,8 +622,13 @@ for step_idx = 1:n_steps % 对当前 sample 的每个时间步进行积分
 	x_k4 = x_now + dt * k3;
 	t_k4 = t_now + dt;
 	if constrained
+		stage_constraint_cfg = rk_stage_constraint_cfg(t_k4, ...
+			snap_start_time, sample_cfg, snap_constraint_cfg, ...
+			snap_constraint_cfg_matrix, do_anchor_snap, ...
+			do_anchor_snap_matrix);
 		[k4, hocbf_info] = constrained_velocity_field(model_collection, t_k4, ...
-			x_k4, active_constraint_cfg, cumulative_variance_now + dt * q3, []);
+			x_k4, stage_constraint_cfg, ...
+			cumulative_variance_now + dt * q3, []);
 		q4 = hocbf_info.sigma2;
 		if collect_diagnostics
 			sample_diag = update_hocbf_diagnostics( ...
@@ -620,6 +715,28 @@ sample_info = struct( ...
 	'diag', sample_diag, ...
 	'max_cumulative_variance', max_cumulative_variance, ...
 	'terminal_safety_filter', terminal_filter_info);
+end
+
+function stage_cfg = rk_stage_constraint_cfg(t_stage, snap_start_time, ...
+	sample_cfg, snap_constraint_cfg, snap_constraint_cfg_matrix, ...
+	do_anchor_snap, do_anchor_snap_matrix)
+% Switch constraints at the actual RK substage time.  Selecting the config
+% only from the outer step index lets the preceding step's k4 land exactly
+% on snap_start_time with PTCLF still active, where its prescribed-time gain
+% is already very large.  k2/k3/k4 must cross the switch consistently with
+% k1 and with the committed time grid.
+snap_active = false;
+if isfinite(snap_start_time)
+	time_tol = 16.0 * eps(max(1.0, abs(snap_start_time)));
+	snap_active = t_stage >= snap_start_time - time_tol;
+end
+if snap_active && do_anchor_snap
+	stage_cfg = snap_constraint_cfg;
+elseif snap_active && do_anchor_snap_matrix
+	stage_cfg = snap_constraint_cfg_matrix;
+else
+	stage_cfg = sample_cfg;
+end
 end
 
 function dump_rollout_failure(ctx, sample_idx, step_idx, times, sample_path, ...

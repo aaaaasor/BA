@@ -17,6 +17,13 @@ classdef LocalGP_MultiOutput < handle
 		LengthScaleTimeVarying = false;
 		LengthScaleTimeScaleStart = 1.0;
 		LengthScaleTimeScaleEnd = 1.0;
+		LengthScaleTimeEndpointEnabled = false;
+		LengthScaleTimeStart = [];
+		LengthScaleTimeEnd = [];
+		% Endpoint interpolation exponent. 1 preserves the original linear
+		% schedule; the third level sets this to 2 for
+		% ell(t)=ell_1+(ell_0-ell_1)(1-t)^2.
+		LengthScaleTimeEndpointPower = 1.0;
 		% GP coefficient
 		K;
 		L;
@@ -126,11 +133,36 @@ classdef LocalGP_MultiOutput < handle
 			end
 			dscale_dt(:) = obj.LengthScaleTimeScaleEnd - obj.LengthScaleTimeScaleStart;
 		end
+		%% Per-dimension endpoint length scale and derivative
+		function ell = length_scale_at_time(obj, t)
+			if obj.LengthScaleTimeEndpointEnabled
+				ell0 = reshape(obj.LengthScaleTimeStart, [], 1, 1);
+				ell1 = reshape(obj.LengthScaleTimeEnd, [], 1, 1);
+				power = obj.LengthScaleTimeEndpointPower;
+				ell = ell1 + (ell0 - ell1) .* (1.0 - t) .^ power;
+			else
+				base_length_scale = reshape(obj.SigmaL, [], 1, 1);
+				ell = base_length_scale .* obj.length_scale_time_scale(t);
+			end
+		end
+		function dell_dt = length_scale_at_time_derivative(obj, t)
+			if obj.LengthScaleTimeEndpointEnabled
+				ell0 = reshape(obj.LengthScaleTimeStart, [], 1, 1);
+				ell1 = reshape(obj.LengthScaleTimeEnd, [], 1, 1);
+				power = obj.LengthScaleTimeEndpointPower;
+				dell_dt = power .* (ell1 - ell0) .* ...
+					(1.0 - t) .^ (power - 1.0);
+			else
+				dell_dt = reshape(obj.SigmaL, [], 1, 1) .* ...
+					obj.length_scale_time_scale_derivative(t);
+			end
+		end
 		%% 新增 kernel_scale_terms
 		function [length_scale_sq, amplitude_scale, length_scale_i, ...
 				length_scale_j] = kernel_scale_terms(obj, Xi, Xj)
 			base_length_scale = reshape(obj.SigmaL, [], 1, 1);
-			if ~obj.LengthScaleTimeVarying
+			if ~obj.LengthScaleTimeVarying && ...
+					~obj.LengthScaleTimeEndpointEnabled
 				length_scale_sq = base_length_scale .^ 2;
 				amplitude_scale = 1.0;
 				length_scale_i = base_length_scale;
@@ -139,16 +171,14 @@ classdef LocalGP_MultiOutput < handle
 			end
 			if isempty(Xj)
 				t_pair = reshape(Xi(1,:), 1, 1, []);
-				scale_i = obj.length_scale_time_scale(t_pair);
-				scale_j = scale_i;
+				length_scale_i = obj.length_scale_at_time(t_pair);
+				length_scale_j = length_scale_i;
 			else
 				t_i = reshape(Xi(1,:), 1, [], 1);
 				t_j = reshape(Xj(1,:), 1, 1, []);
-				scale_i = obj.length_scale_time_scale(t_i);
-				scale_j = obj.length_scale_time_scale(t_j);
+				length_scale_i = obj.length_scale_at_time(t_i);
+				length_scale_j = obj.length_scale_at_time(t_j);
 			end
-			length_scale_i = base_length_scale .* scale_i;
-			length_scale_j = base_length_scale .* scale_j;
 			length_scale_sq = 0.5 * ...
 				(length_scale_i .^ 2 + length_scale_j .^ 2);
 			amplitude_scale = prod(sqrt((2.0 .* length_scale_i .* ...
@@ -157,13 +187,14 @@ classdef LocalGP_MultiOutput < handle
 		end
 		%% 给定一个 query point x，返回该点对应的 length scale 平方
 		function length_scale_sq = query_length_scale_sq(obj, x)
-			scale = obj.length_scale_time_scale(x(1));
-			length_scale_sq = (obj.SigmaL(:) .* scale) .^ 2;
+			ell = obj.length_scale_at_time(x(1));
+			length_scale_sq = reshape(ell, [], 1) .^ 2;
 		end
 		%% 计算 kernel 对 query point x 的梯度
 		function dk_dquery = kernel_query_gradient(obj, X_set, x, Ktx_now, ...
 				length_scale_sq, ell_train, ell_query, query_delta)
-			if ~obj.LengthScaleTimeVarying
+			if ~obj.LengthScaleTimeVarying && ...
+					~obj.LengthScaleTimeEndpointEnabled
 				diff = x' - X_set';
 				length_scale_sq = obj.SigmaL(:) .^ 2;
 				dk_dquery = -(diff ./ length_scale_sq') .* Ktx_now;
@@ -183,11 +214,10 @@ classdef LocalGP_MultiOutput < handle
 			k_row = reshape(Ktx_now, 1, []);
 			dk_by_dim = (dX ./ length_scale_sq) .* k_row;
 
-			base_length_scale = obj.SigmaL(:);
-			dscale_query = obj.length_scale_time_scale_derivative(x(1));
 			ell_train = reshape(ell_train, obj.x_dim, []);
 			ell_query = reshape(ell_query, obj.x_dim, []);
-			dell_query_dt = base_length_scale .* dscale_query;
+			dell_query_dt = reshape( ...
+				obj.length_scale_at_time_derivative(x(1)), obj.x_dim, []);
 			length_scale_sum_sq = ell_train .^ 2 + ell_query .^ 2;
 			d_length_scale_sq_dt = ell_query .* dell_query_dt;
 
@@ -405,6 +435,31 @@ classdef LocalGP_MultiOutput < handle
 			temp_L_now = obj.L(1:LocalGP_DataQuantity,1:LocalGP_DataQuantity);
 			Ktx_now = obj.kernel(X_set, x);
 			v_now = temp_L_now \ Ktx_now;
+			var = obj.SigmaF ^ 2 - v_now' * v_now;
+			if var < 0
+				var = 0;
+			end
+			var = var * ones(obj.y_dim,1);
+		end
+		%% Prediction of Mean and Variance Without Error-Bound Evaluation
+		function [mu,var] = predict_mean_variance(obj,x)
+			LocalGP_DataQuantity = obj.DataQuantity;
+			if LocalGP_DataQuantity == 0
+				mu = zeros(obj.y_dim,1);
+				var = obj.SigmaF ^ 2 * ones(obj.y_dim,1);
+				return;
+			end
+
+			% Prediction-only model caches may intentionally omit alpha/K.
+			% Reuse the same compact X/L/aux_alpha representation as the
+			% variance-gradient rollout predictor, but do not form gradients
+			% or the unrelated theoretical error bound.
+			if ~obj.PredictionCacheReady
+				obj.prepare_prediction_cache();
+			end
+			Ktx_now = obj.kernel(obj.PredictionX, x);
+			v_now = obj.PredictionL \ Ktx_now;
+			mu = obj.PredictionAuxAlpha' * v_now;
 			var = obj.SigmaF ^ 2 - v_now' * v_now;
 			if var < 0
 				var = 0;

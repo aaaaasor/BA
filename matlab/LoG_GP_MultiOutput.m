@@ -10,6 +10,10 @@ classdef LoG_GP_MultiOutput < handle
 		LengthScaleTimeVarying = false;
 		LengthScaleTimeScaleStart = 1.0;
 		LengthScaleTimeScaleEnd = 1.0;
+		LengthScaleTimeEndpointEnabled = false;
+		LengthScaleTimeStart = [];
+		LengthScaleTimeEnd = [];
+		LengthScaleTimeEndpointPower = 1.0;
 		o_ratio = 1/10;
 
 		tau = 1e-6;
@@ -111,6 +115,25 @@ classdef LoG_GP_MultiOutput < handle
 				obj.LocalGP_set{i}.LengthScaleTimeVarying = enabled;
 				obj.LocalGP_set{i}.LengthScaleTimeScaleStart = start_scale;
 				obj.LocalGP_set{i}.LengthScaleTimeScaleEnd = end_scale;
+			end
+		end
+		%% Install per-dimension endpoint length scales in every local GP
+		function set_length_scale_time_endpoints(obj, enabled, ell0, ell1, power)
+			if nargin < 5 || isempty(power)
+				power = 1.0;
+			end
+			validateattributes(power, {'numeric'}, ...
+				{'scalar', 'real', 'finite', 'positive'}, mfilename, 'power');
+			obj.LengthScaleTimeEndpointEnabled = enabled;
+			obj.LengthScaleTimeStart = ell0(:);
+			obj.LengthScaleTimeEnd = ell1(:);
+			obj.LengthScaleTimeEndpointPower = power;
+			for i = 1:obj.Max_LocalGP_Quantity
+				obj.LocalGP_set{i}.invalidate_prediction_cache();
+				obj.LocalGP_set{i}.LengthScaleTimeEndpointEnabled = enabled;
+				obj.LocalGP_set{i}.LengthScaleTimeStart = ell0(:);
+				obj.LocalGP_set{i}.LengthScaleTimeEnd = ell1(:);
+				obj.LocalGP_set{i}.LengthScaleTimeEndpointPower = power;
 			end
 		end
 		%% Update
@@ -341,12 +364,16 @@ classdef LoG_GP_MultiOutput < handle
 			obj.HyperplaneOverlap(ModelNr) = o;
 		end
 		%% Determine which children x belongs
-		function [pL,pR] = activation(obj, x, model)
+		function [pL,pR,gradL,gradR] = activation(obj, x, model)
 			mP = obj.HyperplaneMean(model);
 			cutD = obj.HyperplaneDimension(model);
 			xD = x(cutD); %x value in cut dimension
 			o = obj.HyperplaneOverlap(model); %half of the overlapping region
-			if xD < mP - o/2
+			gradL = zeros(1, obj.x_dim);
+			if ~(isfinite(o) && o > 0)
+				% Degenerate split: retain hard routing and a zero derivative.
+				pL = double(xD < mP);
+			elseif xD < mP - o/2
 				pL = 1;
 			elseif  xD >= mP - o/2 && xD <= mP + o/2 %if in overlapping
 				pL = 0.5 - (xD - mP) / o;
@@ -354,11 +381,14 @@ classdef LoG_GP_MultiOutput < handle
 					pL = 0;
 				elseif(pL >= 1 - 1e-12)
 					pL = 1;
+				else
+					gradL(cutD) = -1 / o;
 				end
 			else
 				pL = 0;
 			end
 			pR = 1 - pL;
+			gradR = -gradL;
 		end
 		%% prediction
 		function [mu,var,likelyhood,eta,eta_max,Na, ...
@@ -451,6 +481,60 @@ classdef LoG_GP_MultiOutput < handle
 			Na = mCount;
 		end
 		%% Prediction of variance only
+		function mu = predict_mean(obj,x)
+			if obj.DataQuantity == 0
+				mu = zeros(obj.y_dim,1);
+				return;
+			end
+			moP = nan(2 * obj.Max_LocalGP_Quantity - 1,2);
+			mCount = 1;
+			moP(1,1) = obj.RootModel;
+			moP(1,2) = 1;
+			while ~isequal(obj.children(moP(1:mCount,1),:), ...
+					-1 * ones(mCount,2))
+				for j = 1:mCount
+					if ~isequal(obj.children(moP(j,1),:), -1 * ones(1,2))
+						[pL, pR] = obj.activation(x,moP(j,1));
+						if pL > 0 && pR == 0
+							moP(j,1) = obj.children(moP(j,1),1);
+							moP(j,2) = moP(j,2)*pL;
+						elseif pR > 0 && pL == 0
+							moP(j,1) = obj.children(moP(j,1),2);
+							moP(j,2) = moP(j,2)*pR;
+						elseif pL > 0 && pR > 0
+							mCount = mCount + 1;
+							moP(mCount,1) = obj.children(moP(j,1),2);
+							moP(mCount,2) = moP(j,2)*pR;
+							moP(j,1) = obj.children(moP(j,1),1);
+							moP(j,2) = moP(j,2)*pL;
+						end
+					end
+				end
+			end
+
+			obj.AgeOfLocalGP = obj.AgeOfLocalGP + 1;
+			p_set = moP(1:mCount,2);
+			mu_set = zeros(obj.y_dim,mCount);
+			var_set = zeros(1,mCount);
+			for i = 1:mCount
+				NodeNr = moP(i,1);
+				LocalGPNr = obj.local_gp_index(NodeNr);
+				[mu_m,var_m] = ...
+					obj.LocalGP_set{LocalGPNr}.predict_mean_variance(x);
+				mu_set(:,i) = mu_m;
+				var_set(i) = max(var_m,eps);
+				obj.AgeOfLocalGP(obj.Node_GP_Map == NodeNr) = 0;
+			end
+			switch obj.AggregationMethod
+				case 'GPOE'
+					variance_now = 1 / sum(p_set' ./ var_set);
+					mu = variance_now * ...
+						(mu_set * (p_set ./ var_set'));
+				otherwise
+					mu = mu_set * p_set;
+			end
+		end
+		%% Prediction of variance only
 		function var = predict_variance(obj,x)
 			if obj.DataQuantity == 0
 				var = obj.SigmaF ^ 2 * ones(obj.y_dim,1);
@@ -518,32 +602,45 @@ classdef LoG_GP_MultiOutput < handle
 			end
 			% Single tree traversal — no redundant obj.predict call, no set_ErrorBound
 			moP = nan(2 * obj.Max_LocalGP_Quantity - 1,2);
+			moDP = zeros(2 * obj.Max_LocalGP_Quantity - 1, obj.x_dim);
 			mCount = 1;
 			moP(1,1) = obj.RootModel;
 			moP(1,2) = 1;
 			while ~isequal(obj.children(moP(1:mCount,1),:), -1 * ones(mCount,2))
 				for j = 1:mCount
 					if ~isequal(obj.children(moP(j,1),:), -1 * ones(1,2))
-						[pL, pR] = obj.activation(x, moP(j,1));
+						[pL, pR, gradL, gradR] = ...
+							obj.activation(x, moP(j,1));
+						parent_weight = moP(j,2);
+						parent_grad = moDP(j,:);
 						if pL > 0 && pR == 0
 							moP(j,1) = obj.children(moP(j,1),1);
-							moP(j,2) = moP(j,2) * pL;
+							moP(j,2) = parent_weight * pL;
+							moDP(j,:) = parent_grad * pL + ...
+								parent_weight * gradL;
 						elseif pR > 0 && pL == 0
 							moP(j,1) = obj.children(moP(j,1),2);
-							moP(j,2) = moP(j,2) * pR;
+							moP(j,2) = parent_weight * pR;
+							moDP(j,:) = parent_grad * pR + ...
+								parent_weight * gradR;
 						elseif pL > 0 && pR > 0
 							mCount = mCount + 1;
 							moP(mCount,1) = obj.children(moP(j,1),2);
-							moP(mCount,2) = moP(j,2) * pR;
+							moP(mCount,2) = parent_weight * pR;
+							moDP(mCount,:) = parent_grad * pR + ...
+								parent_weight * gradR;
 
 							moP(j,1) = obj.children(moP(j,1),1);
-							moP(j,2) = moP(j,2) * pL;
+							moP(j,2) = parent_weight * pL;
+							moDP(j,:) = parent_grad * pL + ...
+								parent_weight * gradL;
 						end
 					end
 				end
 			end
 
 			p_set    = moP(1:mCount,2);
+			dp_set   = moDP(1:mCount,:);
 			mu_set   = zeros(obj.y_dim,mCount);
 			var_set  = zeros(1,mCount);
 			grad_set = zeros(mCount,obj.x_dim);
@@ -558,14 +655,17 @@ classdef LoG_GP_MultiOutput < handle
 
 			switch obj.AggregationMethod
 				case 'GPOE'
-					var  = 1 / sum(p_set' ./ var_set);
+					precision = sum(p_set' ./ var_set);
+					var  = 1 / precision;
 					mu   = var * (mu_set * (p_set ./ var_set'));
-					d_precision = sum(-(p_set' ./ (var_set .^ 2))' .* grad_set, 1);
+					d_precision = sum(dp_set ./ var_set' - ...
+						(p_set ./ (var_set' .^ 2)) .* grad_set, 1);
 					grad = -(var ^ 2) * d_precision;
 				otherwise  % MOE
 					mu   = mu_set * p_set;
 					var  = p_set' * var_set';
-					grad = p_set' * grad_set;
+					grad = p_set' * grad_set + ...
+						sum(dp_set .* var_set', 1);
 			end
 			n_local_gp = mCount;
 		end

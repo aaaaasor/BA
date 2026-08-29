@@ -79,6 +79,12 @@ du_ptcbf_now = reshape(info.u_ptcbf_correction, 1, []);
 du_hocbf_now = reshape(info.u_hocbf_correction, 1, []);
 hocbf_diag.trace_u_ptclf_reference(row_idx, 1:numel(u_now)) = u_ptclf_now;
 hocbf_diag.trace_u_after_ptcbf(row_idx, 1:numel(u_now)) = u_ptcbf_now;
+smoothness_u = struct_field_default(info,'u_contribution_smoothness',zeros(size(u_now)));
+hocbf_diag.trace_u_contribution_smoothness(row_idx,1:numel(u_now)) = smoothness_u(:)';
+hocbf_diag.trace_smoothness_reference_cost(row_idx,1) = ...
+    struct_field_default(info,'smoothness_reference_cost',0);
+hocbf_diag.trace_smoothness_predicted_cost(row_idx,1) = ...
+    struct_field_default(info,'smoothness_predicted_cost',0);
 hocbf_diag.trace_u_ptcbf_correction(row_idx, 1:numel(u_now)) = du_ptcbf_now;
 hocbf_diag.trace_u_hocbf_correction(row_idx, 1:numel(u_now)) = du_hocbf_now;
 hocbf_diag.trace_stage_ptclf_residual_at_reference(row_idx, 1) = ...

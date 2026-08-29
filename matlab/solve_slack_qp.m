@@ -339,8 +339,13 @@ if exitflag <= 0 && ~isempty(z_col) && all(isfinite(z_col))
 		end
 		candidate_lb_violation = max([lb - z_col; 0.0]);
 		candidate_first_order = inf;
-		if isfield(qp_output, 'firstorderopt')
-			candidate_first_order = qp_output.firstorderopt;
+		if isfield(qp_output, 'firstorderopt') && ...
+				~isempty(qp_output.firstorderopt)
+			% MATLAB normally returns a scalar first-order optimality measure,
+			% but some fallback/active-set paths can expose a vector.  The
+			% acceptance test below needs one conservative scalar.
+			candidate_first_order = max( ...
+				abs(qp_output.firstorderopt), [], 'all');
 		end
 		if exitflag <= 0 && candidate_ineq_violation <= 1e-6 && ...
 				candidate_eq_violation <= 1e-6 && ...

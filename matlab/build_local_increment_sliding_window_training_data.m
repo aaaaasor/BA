@@ -12,7 +12,17 @@ n_windows = numel(window_start_idx);
 n_samples = n_trajectories * n_windows;
 n_rows = feature_dim * n_points_per_window;
 
-s_slices = linspace(t_min, t_max, n_s_slices)';
+if isscalar(n_s_slices)
+    s_slices = linspace(t_min, t_max, n_s_slices)';
+else
+    s_slices = n_s_slices(:);
+    if isempty(s_slices) || any(~isfinite(s_slices)) || ...
+            any(diff(s_slices) <= 0) || s_slices(1) < t_min || ...
+            s_slices(end) > t_max
+        error(['Explicit flow-matching time slices must be finite, ', ...
+            'strictly increasing, and contained in [t_min,t_max].']);
+    end
+end
 target_data = zeros(n_rows, n_samples);
 
 %% Increment Window Targets

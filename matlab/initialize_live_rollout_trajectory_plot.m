@@ -12,8 +12,33 @@ sample_indices = struct_field_default(constraint_cfg, ...
 if ~ismember(sample_idx, sample_indices)
     return;
 end
+requested_position = find(sample_indices == sample_idx, 1, 'first');
+group_size = max(1, round(struct_field_default(constraint_cfg, ...
+    'live_trajectory_group_size', numel(sample_indices))));
+group_idx = ceil(requested_position / group_size);
+segment_in_group = mod(requested_position - 1, group_size) + 1;
+group_positions = (group_idx-1)*group_size + ...
+    (1:min(group_size,numel(sample_indices)-(group_idx-1)*group_size));
+present_positions = group_positions(sample_indices(group_positions)>0);
+is_group_start = requested_position == present_positions(1);
+is_group_end = requested_position == present_positions(end);
+original_indices = struct_field_default(constraint_cfg, ...
+    'live_trajectory_original_sample_indices', []);
+display_sample_idx = sample_idx;
+if ~isempty(original_indices)
+    display_sample_idx = original_indices(sample_idx);
+end
+group_labels = struct_field_default(constraint_cfg, ...
+    'live_trajectory_group_labels', 1:ceil(numel(sample_indices) / group_size));
+if numel(group_labels) >= group_idx
+    group_label = group_labels(group_idx);
+else
+    group_label = group_idx;
+end
 
-if isfield(constraint_cfg, 'track_boundary_point_maps')
+if isfield(constraint_cfg, 'live_trajectory_point_maps')
+    point_maps = constraint_cfg.live_trajectory_point_maps;
+elseif isfield(constraint_cfg, 'track_boundary_point_maps')
     point_maps = constraint_cfg.track_boundary_point_maps;
 elseif isfield(constraint_cfg, 'obstacle_point_maps')
     point_maps = constraint_cfg.obstacle_point_maps;
@@ -27,11 +52,14 @@ xy0 = state_to_xy(x0, point_maps);
 
 track = struct_field_default(constraint_cfg, ...
     'live_trajectory_track_segment', []);
-figure_tag = 'FirstLevelLiveRK4Trajectory';
-axes_tag = 'FirstLevelLiveRK4Axes';
+level_label = char(string(struct_field_default(constraint_cfg, ...
+    'live_trajectory_level_label', 'First-level')));
+level_key = regexprep(level_label, '[^A-Za-z0-9]', '');
+figure_tag = [level_key, 'LiveRK4Trajectory'];
+axes_tag = [level_key, 'LiveRK4Axes'];
 fig = findall(groot, 'Type', 'figure', 'Tag', figure_tag);
 if isempty(fig)
-    fig = figure('Name', 'First-level RK4 generation', ...
+    fig = figure('Name', [level_label, ' RK4 generation'], ...
         'Tag', figure_tag, 'Color', 'w', 'WindowStyle', 'normal', ...
         'Units', 'normalized', 'Position', [0.16, 0.10, 0.60, 0.78]);
     movegui(fig, 'center');
@@ -46,12 +74,13 @@ else
     end
     figure(fig);
 end
-set(fig, 'Name', sprintf('RK4 generation - sample %d', sample_idx));
+set(fig, 'Name', sprintf('%s RK4 generation - segment sample %d', ...
+    level_label, display_sample_idx));
 set(fig, 'CurrentAxes', ax);
 
 % Rebuild the static layer only for the first requested sample (or after a
 % user has cleared the figure). Later samples reuse this same background.
-first_requested_sample = min(sample_indices);
+first_requested_sample = sample_indices(find(sample_indices>0,1));
 background_ready = isappdata(ax, 'joint_softmin_background_ready') && ...
     getappdata(ax, 'joint_softmin_background_ready');
 if sample_idx == first_requested_sample || ~background_ready
@@ -61,6 +90,9 @@ if sample_idx == first_requested_sample || ~background_ready
     setappdata(ax, 'joint_softmin_background_ready', true);
 else
     delete(findall(ax, 'Tag', 'LiveRK4Dynamic'));
+    if is_group_start
+        delete(findall(ax, 'Tag', 'LiveRK4Completed'));
+    end
     legend(ax, 'off');
     hold(ax, 'on');
 end
@@ -78,8 +110,14 @@ for point_idx = 1:numel(point_maps)
     set(trace_handles(point_idx), 'Tag', 'LiveRK4Dynamic');
     addpoints(trace_handles(point_idx), xy0(point_idx, 1), xy0(point_idx, 2));
 end
+segment_color = [0.00, 0.35, 0.85];
+if struct_field_default(constraint_cfg, ...
+        'live_trajectory_alternating_segment_colors', false)
+    alternating_colors = [0.85, 0.10, 0.10; 0.10, 0.65, 0.20];
+    segment_color = alternating_colors(mod(segment_in_group - 1, 2) + 1, :);
+end
 current_handle = plot(ax, xy0(:, 1), xy0(:, 2), '-o', ...
-    'Color', [0.00, 0.35, 0.85], 'MarkerFaceColor', [0.00, 0.35, 0.85], ...
+    'Color', segment_color, 'MarkerFaceColor', segment_color, ...
     'LineWidth', 2.0, 'MarkerSize', 5.5, ...
     'DisplayName', 'current generated curve', 'Tag', 'LiveRK4Dynamic');
 
@@ -95,15 +133,43 @@ xlabel(ax, 'x');
 ylabel(ax, 'y');
 grid(ax, 'off');
 legend(ax, [initial_handle, current_handle], 'Location', 'best');
-title(ax, sprintf('Sample %d: RK4 step 0/%d, t = %.4f', ...
-    sample_idx, n_steps, t0));
+title(ax, sprintf(['%s trajectory %d, segment %d/%d ', ...
+    '(sample %d): RK4 step 0/%d, t = %.4f'], ...
+    level_label, group_label, segment_in_group, group_size, ...
+    display_sample_idx, n_steps, t0));
 drawnow;
+
+% One VideoWriter is shared by the child segments of one parent trajectory.
+% Start a fresh numbered MP4 at the first child of every parent.
+video_enabled = struct_field_default(constraint_cfg, ...
+    'live_trajectory_video_enabled', false);
+if video_enabled && is_group_start
+    video_cfg = constraint_cfg;
+    output_pattern = struct_field_default(constraint_cfg, ...
+        'live_trajectory_video_output_pattern', '');
+    if ~isempty(output_pattern)
+        [video_dir, video_name_pattern, video_ext] = fileparts( ...
+            char(string(output_pattern)));
+        video_filename = sprintf( ...
+            [video_name_pattern, video_ext], group_label);
+        video_cfg.live_trajectory_video_output_path = ...
+            fullfile(video_dir, video_filename);
+    end
+    live_rollout_video_writer('start', fig, video_cfg);
+end
 
 plot_state = struct( ...
     'enabled', true, ...
     'figure', fig, ...
     'axes', ax, ...
     'point_maps', point_maps, ...
+    'level_label', level_label, ...
+    'group_idx', group_idx, ...
+    'group_label', group_label, ...
+    'segment_in_group', segment_in_group, ...
+    'group_size', group_size, ...
+    'video_group_end', is_group_end, ...
+    'display_sample_idx', display_sample_idx, ...
     'current_handle', current_handle, ...
     'trace_handles', trace_handles);
 end

@@ -39,8 +39,10 @@ obstacle.semi_axes = obstacle.semi_axes + ...
 
 track = cfg.track_segment;
 all_xy = [track.left; track.right; track.raceline];
-x_pad = max(0.025, 0.04 * range(all_xy(:, 1)));
-y_pad = max(0.025, 0.04 * range(all_xy(:, 2)));
+x_span = max(all_xy(:, 1)) - min(all_xy(:, 1));
+y_span = max(all_xy(:, 2)) - min(all_xy(:, 2));
+x_pad = max(0.025, 0.04 * x_span);
+y_pad = max(0.025, 0.04 * y_span);
 x_limits = [min(all_xy(:, 1)) - x_pad, max(all_xy(:, 1)) + x_pad];
 y_limits = [min(all_xy(:, 2)) - y_pad, max(all_xy(:, 2)) + y_pad];
 x_grid = linspace(x_limits(1), x_limits(2), 500);

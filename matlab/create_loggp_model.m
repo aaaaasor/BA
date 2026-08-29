@@ -15,6 +15,19 @@ ls_start = struct_field_default(gp, 'length_scale_time_scale_start', 1.0);
 ls_end = struct_field_default(gp, 'length_scale_time_scale_end', 1.0);
 local_gp.set_length_scale_time_schedule(time_varying, ls_start, ls_end);
 
+% Third-level endpoint schedule. Each output GP and each input dimension
+% owns an independently estimated ell_0/ell_1 pair. The interpolation is
+% performed inside the one nonstationary SE kernel, before GP regression.
+if isfield(gp, 'length_scale_time_endpoint_enabled') && ...
+        gp.length_scale_time_endpoint_enabled
+    ell0 = gp.length_scale_time_start_mat(:, output_idx);
+    ell1 = gp.length_scale_time_end_mat(:, output_idx);
+    endpoint_power = struct_field_default(gp, ...
+        'length_scale_time_endpoint_power', 1.0);
+    local_gp.set_length_scale_time_endpoints( ...
+        true, ell0, ell1, endpoint_power);
+end
+
 % 选择 LocalGP 聚合方式
 local_gp.AggregationMethod = gp.aggregation_method;
 

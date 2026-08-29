@@ -27,7 +27,26 @@ if hocbf_enabled && grad_x_active
 	types_all(end + 1, 1) = "integral";
 	owner_all(end + 1, 1) = 0;
 end
-if isfinite(terminal_bound) && grad_x_active
+terminal_per_dim = ~isempty(terminal_info) && ...
+	struct_field_default(terminal_info, 'per_dimension', false);
+if terminal_per_dim
+	% One global row per GP output rather than a single row on the
+	% summed sigma^2; see terminal_variance_ptcbf for the rationale. Test
+	% every row independently: gating these rows with the summed-gradient
+	% flag would suppress all component constraints precisely when their
+	% gradients cancel in the sum.
+	A_dim = terminal_info.rows_A;
+	b_dim = terminal_info.rows_bound;
+	row_norms = sqrt(sum(A_dim .^ 2, 2));
+	grad_tol = struct_field_default(constraint_cfg, 'grad_tol', 1e-6);
+	keep = all(isfinite(A_dim), 2) & isfinite(b_dim) & ...
+		row_norms >= grad_tol;
+	n_keep = nnz(keep);
+	A_all = [A_all; A_dim(keep, :)];
+	b_all = [b_all; b_dim(keep)];
+	types_all(end + (1:n_keep), 1) = "terminal";
+	owner_all(end + (1:n_keep), 1) = 0;
+elseif isfinite(terminal_bound) && grad_x_active
 	A_all(end + 1, :) = grad_x;
 	b_all(end + 1, 1) = terminal_bound;
 	types_all(end + 1, 1) = "terminal";
@@ -119,6 +138,8 @@ global_rows = find(owner_all == 0);
 % 同时作用于多个控制块，因此 P5 修正会按照累计 Jacobian 自动分配，
 % 而不是只交给最后一个控制 u5。
 u_ptclf_reference = u;
+smoothness_cost = struct('enabled',false);
+smoothness_objective_contribution = zeros(n_u,1);
 if ptclf_reference_enabled
 	stats_ptclf = stats;
 	% ptclf_reference_rows 只包含 anchor_clf_first/anchor_clf_last，
@@ -170,7 +191,9 @@ end
 % 内部点障碍 PTCBF 所需的最小附加修正 Delta u。此处不再加入 P1/P5
 % 的 PTCLF 行，因此安全修正可以改变 P1/P5 的实际收敛速度。
 	safety_rows = find(types_all == "obstacle" | types_all == "boundary");
-if ~isempty(safety_rows)
+smoothness_options = struct_field_default(constraint_cfg, ...
+    'obstacle_smoothness',struct('enabled',false));
+if ~isempty(safety_rows) || struct_field_default(smoothness_options,'enabled',false)
 	% Let the obstacle PTCBF minimally modify the complete PTCLF reference.
 	% P2/P3/P4 depend on the shared S0 block, so freezing u1 forces the
 	% low-leverage increment blocks to generate unnecessarily large controls.
@@ -190,31 +213,46 @@ if ~isempty(safety_rows)
 	filter_rows = safety_rows(active_filter);
 	A_filter = A_filter_all(active_filter, :);
 	b_filter = b_filter_all(active_filter);
-	if ~isempty(filter_rows)
+	smoothness_cost = third_obstacle_smoothness_cost( ...
+		stats,constraint_cfg,t,u_ptclf_reference,filter_cols);
+	if ~isempty(filter_rows) || smoothness_cost.enabled
 		stats_filter = stats;
 		stats_filter.mu = reshape(stats.mu(filter_cols), 1, []) + ...
 			reshape(u_ptclf_reference(filter_cols), 1, []);
-		% 首块加权(避障级)。与 PTCLF 级同样的道理: increment 表示下
-		% point m 的位置是前 m 个 block 的累加，所以避障行在 block1 上的
+		% 首块加权(safety filter级)。与 PTCLF 级同样的道理: increment 表示下
+		% point m 的位置是前 m 个 block 的累加，所以障碍/边界行在 block1 上的
 		% 梯度是其它块的约 45 倍(实测 b1≈24~25 vs b2~b4≈0.53~0.57)。
 		% 最小范数按 a^2/w^2 分配工作量，w=1 时 block1 的性价比是其它块的
 		% 45^2≈2025 倍 -> 修正几乎全压在 u1 上，表现为"整段平移"。
 		% 取 w≈45 可使各块工作量大致均衡；默认 1.0 保持原行为。
 		% 注意: 这里的控制向量只覆盖 filter_cols，权重向量必须同长度；
 		% endpoint_hold 激活时 filter_cols 本就不含 block1，无需加权。
-		obstacle_constraint_cfg = local_constraint_cfg;
-		obstacle_first_block_weight = struct_field_default(constraint_cfg, ...
-			'obstacle_first_block_control_weight', 1.0);
-		if obstacle_first_block_weight ~= 1.0 && ~endpoint_hold_active
-			obstacle_control_weight = ones(numel(filter_cols), 1);
-			obstacle_control_weight(1:block_dim) = obstacle_first_block_weight;
-			obstacle_constraint_cfg.control_weight = obstacle_control_weight;
+		safety_constraint_cfg = local_constraint_cfg;
+		safety_first_block_weight = struct_field_default(constraint_cfg, ...
+			'safety_first_block_control_weight', 1.0);
+		if safety_first_block_weight ~= 1.0 && ~endpoint_hold_active
+			safety_control_weight = ones(numel(filter_cols), 1);
+			safety_control_weight(1:block_dim) = safety_first_block_weight;
+			safety_constraint_cfg.control_weight = safety_control_weight;
 		end
-		[u_filter, exitflag_filter, slack_filter, ~, ...
-			iterations_filter, seconds_filter, contributions_filter] = ...
-			solve_slack_qp(A_filter, b_filter, types_all(filter_rows), ...
-			obstacle_constraint_cfg, t, stats_filter, terminal_info, ...
-			integral_residual_without_u, terminal_residual_without_u);
+		if smoothness_cost.enabled
+			[u_filter, exitflag_filter, slack_filter, ~, ...
+				iterations_filter, seconds_filter, contributions_filter, ~, ...
+				objective_part] = solve_control_least_squares_qp( ...
+				A_filter,b_filter,types_all(filter_rows),safety_constraint_cfg, ...
+				t,stats_filter,terminal_info,integral_residual_without_u, ...
+				terminal_residual_without_u,smoothness_cost.G,smoothness_cost.e);
+			smoothness_objective_contribution(filter_cols)=objective_part;
+			smoothness_cost.reference_cost=0.5*sum(smoothness_cost.e.^2);
+			smoothness_cost.predicted_cost=0.5*sum( ...
+				(smoothness_cost.G*u_filter+smoothness_cost.e).^2);
+		else
+			[u_filter, exitflag_filter, slack_filter, ~, ...
+				iterations_filter, seconds_filter, contributions_filter] = ...
+				solve_slack_qp(A_filter, b_filter, types_all(filter_rows), ...
+					safety_constraint_cfg, t, stats_filter, terminal_info, ...
+					integral_residual_without_u, terminal_residual_without_u);
+		end
 		if numel(u_filter) ~= numel(filter_cols)
 			error(['Internal PTCBF filter returned %d controls for %d ', ...
 				'internal columns (filter size %s).'], numel(u_filter), ...
@@ -261,16 +299,16 @@ if endpoint_hold_active
 	end
 end
 
-% HOCBF is the final post-filter.  Which rows it re-imposes switches in time.
+% Strict sequential cascade: every stage uses the previous stage's complete
+% controller as its reference.
 %
-% t <  hocbf_filter_end_time: only the variance rows.  The obstacle/boundary
-%   correction computed one stage above is therefore allowed to be undone by
-%   this projection — early on the variance/learning objective takes priority
-%   and safety is not enforced at the end of the cascade.
+% t < hocbf_filter_end_time:
+%   u1 = u_ptclf,
+%   u2 = u1 + Delta_u_safety,
+%   u3 = u2 + Delta_u_variance.
 % t >= hocbf_filter_end_time: the variance rows are not generated at all
-%   (see apply_hocbf_integral: hocbf_filter_active), so global_rows is empty
-%   and this whole stage is skipped.  The obstacle/boundary stage is then the
-%   final correction, which is where safety is actually enforced.
+%   (see apply_hocbf_integral: hocbf_filter_active), so
+%   u2 = u_ptclf + Delta_u_safety remains applied.
 %
 % Anchor CLF is never re-imposed here because it is the performance
 % reference, not a safety condition.
@@ -284,26 +322,57 @@ if ~isempty(global_rows)
 		'hocbf_filter_end_time', inf);
 	if variance_only_filter
 		final_filter_rows = global_rows;
+		if endpoint_hold_active
+			error(['Independent variance filter overlaps endpoint snap/hold. ', ...
+				'End the variance filter before the snap region begins.']);
+		end
+		% Use the complete previous-stage controller u2 as the variance-QP
+		% reference.  The new correction therefore preserves the cascade
+		% structurally instead of replacing either PTCLF or geometric safety.
+		b_filter = b_all(final_filter_rows) - ...
+			A_all(final_filter_rows, :) * u;
+		effective_bounds(final_filter_rows) = b_filter;
+		stats_filter = stats;
+		stats_filter.mu = reshape(stats.mu(:) + u, ...
+			size(stats.mu));
+		variance_constraint_cfg = constraint_cfg;
+		variance_first_block_weight = struct_field_default(constraint_cfg, ...
+			'variance_first_block_control_weight', 1.0);
+		variance_control_weight = ones(n_u, 1);
+		variance_control_weight(1:block_dim) = ...
+			variance_first_block_weight;
+		variance_constraint_cfg.control_weight = variance_control_weight;
+		[u_filter, exitflag_filter, slack_filter, ~, iterations_filter, ...
+			seconds_filter, contributions_filter, ...
+			equality_filter_contribution] = solve_slack_qp( ...
+			A_all(final_filter_rows, :), b_filter, ...
+			types_all(final_filter_rows), variance_constraint_cfg, t, ...
+			stats_filter, ...
+			terminal_info, integral_residual_without_u, ...
+			terminal_residual_without_u);
+		u = u + u_filter;
+		endpoint_hold_contribution = endpoint_hold_contribution + ...
+			equality_filter_contribution;
 	else
 		final_filter_rows = [global_rows; safety_rows];
+		b_filter = b_all(final_filter_rows) - ...
+			A_all(final_filter_rows, :) * u;
+		effective_bounds(final_filter_rows) = b_filter;
+		stats_filter = stats;
+		if endpoint_hold_active
+			stats_filter.mu = reshape(stats.mu(:) + u, size(stats.mu));
+		end
+		[u_filter, exitflag_filter, slack_filter, ~, iterations_filter, ...
+			seconds_filter, contributions_filter, ...
+			equality_filter_contribution] = solve_slack_qp( ...
+			A_all(final_filter_rows, :), b_filter, ...
+			types_all(final_filter_rows), constraint_cfg, t, ...
+			stats_filter, terminal_info, integral_residual_without_u, ...
+			terminal_residual_without_u);
+		u = u + u_filter;
+		endpoint_hold_contribution = endpoint_hold_contribution + ...
+			equality_filter_contribution;
 	end
-	b_filter = b_all(final_filter_rows) - ...
-		A_all(final_filter_rows, :) * u;
-	effective_bounds(final_filter_rows) = b_filter;
-	stats_filter = stats;
-	if endpoint_hold_active
-		stats_filter.mu = reshape(stats.mu(:) + u, size(stats.mu));
-	end
-	[u_filter, exitflag_filter, slack_filter, ~, iterations_filter, ...
-		seconds_filter, contributions_filter, ...
-		equality_filter_contribution] = solve_slack_qp( ...
-		A_all(final_filter_rows, :), b_filter, ...
-		types_all(final_filter_rows), ...
-		constraint_cfg, t, stats_filter, terminal_info, ...
-		integral_residual_without_u, terminal_residual_without_u);
-	u = u + u_filter;
-	endpoint_hold_contribution = endpoint_hold_contribution + ...
-		equality_filter_contribution;
 	slack_all(final_filter_rows) = slack_filter;
 	row_solved(final_filter_rows) = true;
 	row_contributions(final_filter_rows, :) = contributions_filter;
@@ -333,4 +402,6 @@ result.bounds = b_all;
 result.effective_bounds = effective_bounds;
 result.active_constraint_count = sum(abs(relaxed_residuals) <= 1e-7);
 result.equality_contribution = endpoint_hold_contribution;
+result.smoothness = smoothness_cost;
+result.smoothness_objective_contribution = smoothness_objective_contribution;
 end

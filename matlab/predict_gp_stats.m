@@ -23,4 +23,8 @@ stats.sigma2_components = variance_set; % 各维度方差
 stats.uncertainty = sqrt(sigma2_now);
 stats.sigma2_t = variance_grad_all(1);         % 对时间 t 的梯度
 stats.sigma2_grad_x = reshape(variance_grad_all(2:end), 1, []); % 对状态 x 的梯度
+% Per-output gradients, needed when the variance constraint is imposed on
+% each output dimension separately instead of on the summed sigma^2.
+stats.sigma2_t_components = grad_set(:, 1);
+stats.sigma2_grad_x_components = grad_set(:, 2:end);
 end
