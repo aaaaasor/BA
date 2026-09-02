@@ -17,9 +17,16 @@ fprintf('LoG-GP fitting pairs: %d, input dim: %d, output dim: %d\n', ...
 
 %% LoG-GP Models
 training_accuracy_threshold = gp.training_accuracy_threshold;
+training_point_selection_enabled = struct_field_default( ...
+    gp, 'training_point_selection_enabled', true);
 per_output_training_threshold = training_accuracy_threshold / sqrt(y_dim);
-fprintf('Per-output training uncertainty threshold: %.4g\n', ...
-    per_output_training_threshold);
+if training_point_selection_enabled
+    fprintf('Per-output training uncertainty threshold: %.4g\n', ...
+        per_output_training_threshold);
+else
+    fprintf('Training-point selection OFF: adding all %d pairs per output.\n', ...
+        size(X, 1));
+end
 % 每个输出维度创建一个GP
 output_models = cell(y_dim, 1);
 for output_idx = 1:y_dim
@@ -31,7 +38,8 @@ skipped_counts = zeros(y_dim, 1);
 for point_idx = 1:size(X, 1) % 遍历所有训练点
     for output_idx = 1:y_dim % 遍历所有输出维度
         should_add = true;
-        if output_models{output_idx}.DataQuantity > 0
+        if training_point_selection_enabled && ...
+                output_models{output_idx}.DataQuantity > 0
             variance_now = output_models{output_idx}.predict_variance( ...
                 X(point_idx, :)');
             should_add = sqrt(variance_now) > ...
@@ -45,6 +53,12 @@ for point_idx = 1:size(X, 1) % 遍历所有训练点
         flag = output_models{output_idx}.update(X(point_idx, :)', ...
             Y(point_idx, output_idx), false);
         if flag == -3
+            if ~training_point_selection_enabled
+                error('fit_loggp_model:AllDataCapacityExceeded', ...
+                    ['All-data training reached capacity at pair %d/%d, ', ...
+                    'output %d. No incomplete all-data model will be saved.'], ...
+                    point_idx, size(X, 1), output_idx);
+            end
             warning('LoG-GP data capacity reached for output %d. Remaining data are ignored.', output_idx);
             skipped_counts(output_idx) = skipped_counts(output_idx) + 1;
         else
@@ -60,10 +74,18 @@ for point_idx = 1:size(X, 1) % 遍历所有训练点
 end
 fprintf('  Added per output: %s\n', mat2str(added_counts'));
 fprintf('  Skipped per output: %s\n', mat2str(skipped_counts'));
+if ~training_point_selection_enabled
+    assert(all(added_counts == size(X, 1)) && all(skipped_counts == 0), ...
+        'All-data training must add every pair to every output GP.');
+end
 % 把所有训练好的GP封装起来
 model_collection = build_model_collection(output_models, ...
     added_counts, skipped_counts, size(X, 1), y_dim);
 model_collection.training_accuracy_threshold = training_accuracy_threshold;
+model_collection.training_point_selection_enabled = training_point_selection_enabled;
+if isfield(gp, 'training_data_seed')
+    model_collection.training_data_seed = gp.training_data_seed;
+end
 model_collection.per_output_training_threshold = per_output_training_threshold;
 model_collection.o_ratio = struct_field_default(gp, 'o_ratio', 1/10);
 if isfield(gp, 'length_scale_time_endpoint_enabled') && ...

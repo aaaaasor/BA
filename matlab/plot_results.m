@@ -13,6 +13,10 @@ else
     output_filename = 'gp_flow_matching_demo_matlab.emf';
 end
 output_path = fullfile(output_dir, output_filename);
+if isfield(cfg.output, 'experiment_prefix')
+    output_path = fullfile(output_dir, ...
+        [cfg.output.experiment_prefix, '_ThreePanel.emf']);
+end
 
 fig = figure('Color', 'w', 'WindowStyle', 'normal', ...
     'Units', 'normalized', 'Position', [0.08, 0.18, 0.84, 0.48]);

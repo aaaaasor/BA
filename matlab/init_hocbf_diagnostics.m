@@ -79,9 +79,6 @@ hocbf_diag.trace_u_contribution_hocbf_norm = [];
 hocbf_diag.trace_u_contribution_terminal_norm = [];
 hocbf_diag.trace_u_contribution_anchor_clf_norm = [];
 hocbf_diag.trace_u_contribution_obstacle_norm = [];
-hocbf_diag.trace_u_contribution_smoothness = [];
-hocbf_diag.trace_smoothness_reference_cost = [];
-hocbf_diag.trace_smoothness_predicted_cost = [];
 hocbf_diag.trace_kkt_u_reconstruction_error = [];
 hocbf_diag.trace_correction_norm = [];
 hocbf_diag.trace_max_abs_u = [];
@@ -196,7 +193,7 @@ vector_trace_fields = { ...
 	'trace_u_ptcbf_correction', 'trace_u_hocbf_correction', ...
 	'trace_u_contribution_hocbf', 'trace_u_contribution_terminal', ...
 	'trace_u_contribution_anchor_clf', ...
-	'trace_u_contribution_obstacle', 'trace_u_contribution_smoothness'};
+	'trace_u_contribution_obstacle'};
 field_names = fieldnames(hocbf_diag);
 for field_idx = 1:numel(field_names)
 	field_name = field_names{field_idx};

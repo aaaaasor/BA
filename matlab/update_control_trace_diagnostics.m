@@ -15,15 +15,17 @@ trace.trace_sample_idx(row_idx) = sample_idx;
 trace.trace_step_idx(row_idx) = step_idx;
 trace.trace_stage_idx(row_idx) = stage_idx;
 trace.trace_t(row_idx) = info.t;
-trace.trace_mu(row_idx, :) = reshape(info.mu, 1, []);
-trace.trace_v(row_idx, :) = reshape(info.v, 1, []);
 trace.trace_u(row_idx, :) = reshape(info.u, 1, []);
-trace.trace_u_ptclf_reference(row_idx, :) = ...
-	reshape(info.u_ptclf_reference, 1, []);
-trace.trace_u_after_ptcbf(row_idx, :) = ...
-	reshape(info.u_after_ptcbf, 1, []);
-trace.trace_u_ptcbf_correction(row_idx, :) = ...
-	reshape(info.u_ptcbf_correction, 1, []);
-trace.trace_u_hocbf_correction(row_idx, :) = ...
-	reshape(info.u_hocbf_correction, 1, []);
+if isfield(trace, 'trace_mu')
+	trace.trace_mu(row_idx, :) = reshape(info.mu, 1, []);
+	trace.trace_v(row_idx, :) = reshape(info.v, 1, []);
+	trace.trace_u_ptclf_reference(row_idx, :) = ...
+		reshape(info.u_ptclf_reference, 1, []);
+	trace.trace_u_after_ptcbf(row_idx, :) = ...
+		reshape(info.u_after_ptcbf, 1, []);
+	trace.trace_u_ptcbf_correction(row_idx, :) = ...
+		reshape(info.u_ptcbf_correction, 1, []);
+	trace.trace_u_hocbf_correction(row_idx, :) = ...
+		reshape(info.u_hocbf_correction, 1, []);
+end
 end

@@ -118,16 +118,20 @@ if cfg.output.enabled
             strrep(level_label, ' ', '_'), '_matlab.emf'];
     end
     output_path = fullfile(output_dir, output_filename);
+    if isfield(cfg.output, 'experiment_prefix')
+        output_path = fullfile(output_dir, [cfg.output.experiment_prefix, ...
+            '_', strrep(level_label, '-', '_'), '_Variance.emf']);
+    end
     export_graphics_compat(fig, output_path);
     raw_output_filename = ['trajectory_gp_sigma_raw_vs_time_', ...
         strrep(level_label, ' ', '_'), '_matlab.emf'];
     raw_output_path = fullfile(output_dir, raw_output_filename);
+    if isfield(cfg.output, 'experiment_prefix')
+        raw_output_path = fullfile(output_dir, [cfg.output.experiment_prefix, ...
+            '_', strrep(level_label, '-', '_'), '_Variance_Raw.emf']);
+    end
     export_graphics_compat(fig_raw, raw_output_path);
-    raw_png_path = fullfile(output_dir, strrep( ...
-        raw_output_filename, '.emf', '.png'));
-    exportgraphics(fig_raw, raw_png_path, 'Resolution', 200);
     disp(['Saved raw GP uncertainty trace: ', raw_output_path]);
-    disp(['Saved raw GP uncertainty PNG: ', raw_png_path]);
     if ~isempty(fig_per_output)
         if strcmpi(struct_field_default(cfg, 'scenario', ''), 'racing') && ...
                 strcmpi(level_label, 'third-level')
@@ -138,6 +142,11 @@ if cfg.output.enabled
                 strrep(level_label, ' ', '_'), '_matlab.emf'];
         end
         per_output_path = fullfile(output_dir, per_output_filename);
+        if isfield(cfg.output, 'experiment_prefix')
+            per_output_filename = [cfg.output.experiment_prefix, '_', ...
+                strrep(level_label, '-', '_'), '_Variance_Per_Output.emf'];
+            per_output_path = fullfile(output_dir, per_output_filename);
+        end
         export_graphics_compat(fig_per_output, per_output_path);
         per_output_png_path = fullfile(output_dir, strrep( ...
             per_output_filename, '.emf', '.png'));

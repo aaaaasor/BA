@@ -138,8 +138,6 @@ global_rows = find(owner_all == 0);
 % 同时作用于多个控制块，因此 P5 修正会按照累计 Jacobian 自动分配，
 % 而不是只交给最后一个控制 u5。
 u_ptclf_reference = u;
-smoothness_cost = struct('enabled',false);
-smoothness_objective_contribution = zeros(n_u,1);
 if ptclf_reference_enabled
 	stats_ptclf = stats;
 	% ptclf_reference_rows 只包含 anchor_clf_first/anchor_clf_last，
@@ -191,9 +189,7 @@ end
 % 内部点障碍 PTCBF 所需的最小附加修正 Delta u。此处不再加入 P1/P5
 % 的 PTCLF 行，因此安全修正可以改变 P1/P5 的实际收敛速度。
 	safety_rows = find(types_all == "obstacle" | types_all == "boundary");
-smoothness_options = struct_field_default(constraint_cfg, ...
-    'obstacle_smoothness',struct('enabled',false));
-if ~isempty(safety_rows) || struct_field_default(smoothness_options,'enabled',false)
+if ~isempty(safety_rows)
 	% Let the obstacle PTCBF minimally modify the complete PTCLF reference.
 	% P2/P3/P4 depend on the shared S0 block, so freezing u1 forces the
 	% low-leverage increment blocks to generate unnecessarily large controls.
@@ -213,9 +209,7 @@ if ~isempty(safety_rows) || struct_field_default(smoothness_options,'enabled',fa
 	filter_rows = safety_rows(active_filter);
 	A_filter = A_filter_all(active_filter, :);
 	b_filter = b_filter_all(active_filter);
-	smoothness_cost = third_obstacle_smoothness_cost( ...
-		stats,constraint_cfg,t,u_ptclf_reference,filter_cols);
-	if ~isempty(filter_rows) || smoothness_cost.enabled
+	if ~isempty(filter_rows)
 		stats_filter = stats;
 		stats_filter.mu = reshape(stats.mu(filter_cols), 1, []) + ...
 			reshape(u_ptclf_reference(filter_cols), 1, []);
@@ -235,24 +229,11 @@ if ~isempty(safety_rows) || struct_field_default(smoothness_options,'enabled',fa
 			safety_control_weight(1:block_dim) = safety_first_block_weight;
 			safety_constraint_cfg.control_weight = safety_control_weight;
 		end
-		if smoothness_cost.enabled
-			[u_filter, exitflag_filter, slack_filter, ~, ...
-				iterations_filter, seconds_filter, contributions_filter, ~, ...
-				objective_part] = solve_control_least_squares_qp( ...
-				A_filter,b_filter,types_all(filter_rows),safety_constraint_cfg, ...
-				t,stats_filter,terminal_info,integral_residual_without_u, ...
-				terminal_residual_without_u,smoothness_cost.G,smoothness_cost.e);
-			smoothness_objective_contribution(filter_cols)=objective_part;
-			smoothness_cost.reference_cost=0.5*sum(smoothness_cost.e.^2);
-			smoothness_cost.predicted_cost=0.5*sum( ...
-				(smoothness_cost.G*u_filter+smoothness_cost.e).^2);
-		else
-			[u_filter, exitflag_filter, slack_filter, ~, ...
-				iterations_filter, seconds_filter, contributions_filter] = ...
-				solve_slack_qp(A_filter, b_filter, types_all(filter_rows), ...
-					safety_constraint_cfg, t, stats_filter, terminal_info, ...
-					integral_residual_without_u, terminal_residual_without_u);
-		end
+		[u_filter, exitflag_filter, slack_filter, ~, ...
+			iterations_filter, seconds_filter, contributions_filter] = ...
+			solve_slack_qp(A_filter, b_filter, types_all(filter_rows), ...
+				safety_constraint_cfg, t, stats_filter, terminal_info, ...
+				integral_residual_without_u, terminal_residual_without_u);
 		if numel(u_filter) ~= numel(filter_cols)
 			error(['Internal PTCBF filter returned %d controls for %d ', ...
 				'internal columns (filter size %s).'], numel(u_filter), ...
@@ -402,6 +383,4 @@ result.bounds = b_all;
 result.effective_bounds = effective_bounds;
 result.active_constraint_count = sum(abs(relaxed_residuals) <= 1e-7);
 result.equality_contribution = endpoint_hold_contribution;
-result.smoothness = smoothness_cost;
-result.smoothness_objective_contribution = smoothness_objective_contribution;
 end
