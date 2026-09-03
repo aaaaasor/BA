@@ -157,7 +157,9 @@ if ~struct_field_default(constraint_cfg, 'diagnostics', false)
 	% RK4 only needs sigma2 to integrate cumulative variance when trace
 	% diagnostics are disabled.  Everything below this point derives report
 	% fields from the already-computed control and cannot affect v.
-	diagnostics = struct('sigma2', stats.sigma2);
+	% u is also returned so rk4_rollout can freeze the k1 correction across
+	% the remaining RK stages when u_per_stage is false.
+	diagnostics = struct('sigma2', stats.sigma2, 'u', u);
 	return;
 end
 if ~sequential_increment_qp && exist('qp_residuals', 'var')

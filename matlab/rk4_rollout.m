@@ -38,6 +38,21 @@ control_trace_u_only = collect_control_trace && struct_field_default( ...
 	constraint_cfg, 'control_trace_u_only', false);
 capture_sample_failures = constrained && struct_field_default( ...
 	constraint_cfg, 'seed_filter_reject_failed_rollouts', false);
+% true  (默认, 原有行为): k1..k4 每级各解一次 QP。
+% false (SafeFlow Alg.1 口径): 只在 k1 解一次 QP, 取出修正量 u 后四级共用;
+%   k2..k4 仍调用 predict_gp_stats 拿该级的 GP 均值 mu 与方差 sigma^2, 因此
+%   累积方差的 RK4 积分不受影响 (q1..q4 齐全), 只有安全/方差修正在一步内冻结。
+%   代价: 时变约束的切换点 (0.85/0.95 等) 只在外层时间网格上判定。
+u_per_stage = ~constrained || struct_field_default( ...
+	constraint_cfg, 'u_per_stage', true);
+% 分段冻结: t < u_freeze_before_time 的步冻结 u, 之后逐级重解。
+% 末段 phi ~ (1-t)^-2 一步之内可涨 40% 以上, 冻结会实质改变轨迹; 前段一步
+% 只涨约 10%, 冻结几乎无损。默认 0 = 不启用分段（由 u_per_stage 全局决定）。
+u_freeze_before = 0.0;
+if constrained
+	u_freeze_before = struct_field_default(constraint_cfg, ...
+		'u_freeze_before_time', 0.0);
+end
 diagnostics.max_cumulative_variance = 0.0;
 diagnostics.rollout_elapsed_seconds = 0.0; % 初始化 roll-out 时间统计
 
@@ -96,6 +111,8 @@ ctx = struct( ...
 	'collect_diagnostics', collect_diagnostics, ...
 	'collect_control_trace', collect_control_trace, ...
 	'control_trace_u_only', control_trace_u_only, ...
+	'u_per_stage', u_per_stage, ...
+	'u_freeze_before_time', u_freeze_before, ...
 	'capture_sample_failures', capture_sample_failures, ...
 	'terminal_h0_global', terminal_h0_global, ...
 	'failure_dump_dir', fullfile(fileparts(mfilename('fullpath')), 'outputs'));
@@ -296,6 +313,8 @@ constrained = ctx.constrained;
 collect_diagnostics = ctx.collect_diagnostics;
 collect_control_trace = ctx.collect_control_trace;
 control_trace_u_only = ctx.control_trace_u_only;
+u_per_stage = ctx.u_per_stage;
+u_freeze_before = ctx.u_freeze_before_time;
 
 sample_path = zeros(n_steps + 1, state_dim);
 sample_path(1, :) = reshape(x0, 1, []); % 保存初始状态
@@ -523,6 +542,8 @@ for step_idx = 1:n_steps % 对当前 sample 的每个时间步进行积分
 		x_now = x_now + snap_projector * snap_rhs;
 		sample_path(step_idx, :) = reshape(x_now, 1, []);
 	end
+	% 这一步是否冻结 u：全局冻结，或分段冻结且尚未进入末段。
+	freeze_now = constrained && (~u_per_stage || t_now < u_freeze_before);
 	%% k1
 	if constrained
 		stage_constraint_cfg = rk_stage_constraint_cfg(t_now, ...
@@ -532,6 +553,7 @@ for step_idx = 1:n_steps % 对当前 sample 的每个时间步进行积分
 		[k1, hocbf_info] = constrained_velocity_field(model_collection, ...
 			t_now, x_now, stage_constraint_cfg, cumulative_variance_now, []);
 		q1 = hocbf_info.sigma2; % 当前 RK4 子步 k1 位置的瞬时方差值
+		u_frozen = hocbf_info.u(:); % 冻结模式下 k2..k4 复用
 		if collect_diagnostics
 			sample_diag = update_hocbf_diagnostics( ...
 				sample_diag, hocbf_info, sample_idx, step_idx, 'k1');
@@ -546,7 +568,11 @@ for step_idx = 1:n_steps % 对当前 sample 的每个时间步进行积分
 	%% k2
 	x_k2 = x_now + 0.5 * dt * k1;
 	t_k2 = t_now + 0.5 * dt;
-	if constrained
+	if freeze_now
+		stats_k2 = predict_gp_stats(model_collection.model, [t_k2; x_k2]);
+		k2 = stats_k2.mu + u_frozen;   % 冻结 k1 的修正量
+		q2 = stats_k2.sigma2;          % 方差积分仍用本级的 sigma^2
+	elseif constrained
 		stage_constraint_cfg = rk_stage_constraint_cfg(t_k2, ...
 			snap_start_time, sample_cfg, snap_constraint_cfg, ...
 			snap_constraint_cfg_matrix, do_anchor_snap, ...
@@ -569,7 +595,11 @@ for step_idx = 1:n_steps % 对当前 sample 的每个时间步进行积分
 	%% k3
 	x_k3 = x_now + 0.5 * dt * k2;
 	t_k3 = t_now + 0.5 * dt;
-	if constrained
+	if freeze_now
+		stats_k3 = predict_gp_stats(model_collection.model, [t_k3; x_k3]);
+		k3 = stats_k3.mu + u_frozen;
+		q3 = stats_k3.sigma2;
+	elseif constrained
 		stage_constraint_cfg = rk_stage_constraint_cfg(t_k3, ...
 			snap_start_time, sample_cfg, snap_constraint_cfg, ...
 			snap_constraint_cfg_matrix, do_anchor_snap, ...
@@ -592,7 +622,11 @@ for step_idx = 1:n_steps % 对当前 sample 的每个时间步进行积分
 	%% k4
 	x_k4 = x_now + dt * k3;
 	t_k4 = t_now + dt;
-	if constrained
+	if freeze_now
+		stats_k4 = predict_gp_stats(model_collection.model, [t_k4; x_k4]);
+		k4 = stats_k4.mu + u_frozen;
+		q4 = stats_k4.sigma2;
+	elseif constrained
 		stage_constraint_cfg = rk_stage_constraint_cfg(t_k4, ...
 			snap_start_time, sample_cfg, snap_constraint_cfg, ...
 			snap_constraint_cfg_matrix, do_anchor_snap, ...
