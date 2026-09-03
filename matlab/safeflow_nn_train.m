@@ -131,7 +131,7 @@ if do_plot
     f = figure('Color','w','Position',[100 100 1100 460]);
     subplot(1,2,1);
     semilogy(movmean(loss_hist, 50), 'LineWidth', 1.2); grid on;
-    xlabel('step'); ylabel('flow matching loss'); title('训练损失');
+    xlabel('step'); ylabel('flow matching loss'); title('Training Loss');
 
     subplot(1,2,2); hold on;
     draw_track_segment(segment, 'HandleVisibility','off');
@@ -143,10 +143,10 @@ if do_plot
         plot(Pgen(:,i,1), Pgen(:,i,2), '-', 'LineWidth', 1.4, ...
             'HandleVisibility','off');
     end
-    plot(nan,nan,'-','Color',[.75 .75 .75],'DisplayName','训练轨迹 (30)');
-    plot(nan,nan,'-','Color',[0 .45 .74],'DisplayName','生成轨迹 (20)');
+    plot(nan,nan,'-','Color',[.75 .75 .75],'DisplayName',sprintf('Training trajectories (%d)', N));
+    plot(nan,nan,'-','Color',[0 .45 .74],'DisplayName',sprintf('Generated trajectories (%d)', n_gen));
     axis equal; grid on; legend('Location','best');
-    title(sprintf('%d 步训练后的生成结果', n_steps));
+    title(sprintf('Generated Samples after %d Training Steps', n_steps));
 
     png = fullfile(this_dir, 'outputs', 'SafeFlowNN_smoke_test.png');
     exportgraphics(f, png, 'Resolution', 130);
