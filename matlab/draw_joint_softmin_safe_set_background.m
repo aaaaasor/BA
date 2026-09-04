@@ -40,6 +40,14 @@ for boundary_idx = 1:2
 end
 kappa = struct_field_default(constraint_cfg, ...
     'joint_safety_softmin_kappa', 2000.0);
+% Match joint_safety_softmin_info: normalise components to first-order
+% distances before the soft minimum, otherwise this background shows a
+% different safe set than the one the QP actually enforces.
+if struct_field_default(constraint_cfg, ...
+        'joint_safety_softmin_normalize_by_gradient', true)
+    component_h = softmin_normalize_grid(component_h, x_grid, y_grid, ...
+        struct_field_default(constraint_cfg, 'grad_tol', 1e-6));
+end
 h_min = min(component_h, [], 3);
 h_soft = h_min - log(sum(exp(-kappa .* (component_h - h_min)), 3)) ./ kappa;
 safe_mask = h_soft >= 0;

@@ -40,6 +40,20 @@ seed    = gf('seed', 11);
 % t_k 与 T_t），然后作为固定向量加进流场，四级只重算 v^theta。
 % true 则每级重解 QP（数值更自洽，但 QP 次数与耗时约 4 倍，属偏离论文）。
 u_stage = gf('u_per_stage', false);
+% 式 30 中 slack 相对 |u|^2 的权重。原文为 1（两项等权）。
+% 加大它等价于把安全看得比“少改动流场”更重，可用来检验
+% “引导阶段安全率低是目标函数权衡所致”这一判断。
+w_slack = gf('slack_weight', 1.0);
+% false 时只保留障碍约束、去掉左右赛道边界行——即 SafeFlow 原文平面导航
+% 实验的口径（安全集只含 3 个椭圆，迷宫墙不进 QP）。
+use_boundary_rows = gf('boundary_constraints', true);
+% >0 时把该点的全部安全行按 soft-min 合成一行（与本项目三层方法同一口径，
+% cfg.*_joint_safety_softmin_kappa = 2000）。0 = 保持原文的多行独立约束。
+kappa = gf('softmin_kappa', 0);
+% obstacle_inflation: 加在障碍半轴上的膨胀量（与 make_level_variance_constraint
+% 的 inflated_semi_axes 同一口径）。SafeFlow 原文为 0（h 是精确水平集）。
+% 引导只把 h_inflated 驱动到 0^-，故 inflation>0 时真实 h 收敛到 +inflation^-。
+obs_infl = gf('obstacle_inflation', 0);
 % 终端投影审计：对最多这么多个被移动的点，另用 fmincon 多起点重解式 32，
 % 记录我们的序贯线性化解与该参考解的距离差，用来量化"局部 vs 全局"的差距。
 % 0 = 关闭（默认）。失败点的 fmincon 兜底与本开关无关，始终启用。
@@ -48,7 +62,11 @@ audit_n = gf('terminal_audit_n', 0);
 cfg = get_config();
 rng(cfg.random_seed);
 [~, segment] = scenario_training_points(cfg, 65, cfg.n_train);
-obst = configure_racing_obstacles(segment, cfg.obstacle);
+obst_phys = configure_racing_obstacles(segment, cfg.obstacle);
+obst = obst_phys;                     % 引导/投影用的（可膨胀）几何
+if obs_infl ~= 0
+    obst.semi_axes = obst.semi_axes + obs_infl;
+end
 geom = build_track_boundary_geometry(segment, ...
     struct_field_default(cfg.track_boundary, 'n_spline_points', 400));
 margin = struct_field_default(cfg.track_boundary, 'margin', 0.003);
@@ -175,7 +193,8 @@ out = struct('points', Pgen, 'features', Fgen, 'state', z, 'mode', mode, ...
     'n_qp', n_qp, 'slack_active', slack_hits, ...
     'terminal_corrected', term_moved, 'terminal_failed', term_fail, ...
     'terminal_rescued_by_fmincon', term_rescued, 'terminal_audit', audit, ...
-    'segment', segment, 'obstacle', obst, 'geometry', geom, ...
+    'segment', segment, 'obstacle', obst_phys, 'geometry', geom, ...
+    'obstacle_constraint', obst, 'obstacle_inflation', obs_infl, ...
     'margin', margin, 'n_gen', n_gen, 'u_per_stage', u_stage, ...
     ... % ---- 复现所需的种子与初始噪声 ----
     'z0', z0, 'rollout_seed', seed, 'trajectory_seeds', traj_seeds, ...
@@ -227,15 +246,36 @@ out = struct('points', Pgen, 'features', Fgen, 'state', z, 'mode', mode, ...
     % 该点的全部 N 个约束：a_j = grad_h'*v + phi*h,  b_j = grad_h
     function [a, Bm] = point_rows(p, vp, tc)
         a = zeros(nObs+2,1); Bm = zeros(nObs+2,2); n = 0;
+        hv = zeros(nObs+2,1); gv = zeros(nObs+2,2);
         for jo = 1:nObs
             [h, gp] = obstacle_level_and_gradient(p, obst, jo);
             [a,Bm,n] = add(a,Bm,n,h,gp,vp,tc);
+            if n > 0, hv(n) = h; gv(n,:) = gp(:).'; end
         end
-        for bi = 1:2
-            [hr, gp] = evaluate_track_implicit_field(geom.implicit_fields, bi, p);
-            [a,Bm,n] = add(a,Bm,n,hr-margin,gp,vp,tc);
+        if use_boundary_rows
+            for bi = 1:2
+                [hr, gp] = evaluate_track_implicit_field(geom.implicit_fields, bi, p);
+                [a,Bm,n] = add(a,Bm,n,hr-margin,gp,vp,tc);
+                if n > 0, hv(n) = hr-margin; gv(n,:) = gp(:).'; end
+            end
         end
         a = a(1:n); Bm = Bm(1:n,:);
+        if kappa > 0 && n > 1
+            [a, Bm] = softmin_row(hv(1:n), gv(1:n,:), vp, tc);
+        end
+    end
+
+    % h_soft = -(1/k) log sum exp(-k h_i);  grad = sum_i w_i grad h_i
+    function [a1, B1] = softmin_row(hs, gs, vp, tc)
+        m  = min(hs);
+        e  = exp(-kappa * (hs - m));
+        se = sum(e);
+        hsoft = m - log(se)/kappa;
+        w  = e / se;
+        g  = (w.' * gs);
+        if norm(g) < 1e-12, a1 = zeros(0,1); B1 = zeros(0,2); return; end
+        a1 = g*vp(:) + phi_val(hsoft, tc)*hsoft;
+        B1 = g;
     end
 
     function [a,Bm,n] = add(a,Bm,n,h,gp,vp,tc)
@@ -269,14 +309,14 @@ out = struct('points', Pgen, 'features', Fgen, 'state', z, 'mode', mode, ...
     function [u, used_slack] = qp2d(a, Bm)
         N = numel(a);
         best_u = zeros(2,1);
-        best_f = a.'*0 + sum(max(0,-a).^2);   % V = 空集, u = 0
+        best_f = w_slack * sum(max(0,-a).^2);   % V = 空集, u = 0
         for mask = 1:(2^N - 1)
             V = bitget(mask, 1:N) > 0;
             Bv = Bm(V,:);  av = a(V);
-            M  = eye(2) + (Bv.' * Bv);
-            uc = M \ (-(Bv.' * av));
+            M  = eye(2) + w_slack * (Bv.' * Bv);
+            uc = M \ (-w_slack * (Bv.' * av));
             r  = a + Bm*uc;
-            f  = uc.'*uc + sum(max(0,-r).^2);
+            f  = uc.'*uc + w_slack * sum(max(0,-r).^2);
             if f < best_f, best_f = f; best_u = uc; end
         end
         u = best_u;

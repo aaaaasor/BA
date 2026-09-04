@@ -130,23 +130,18 @@ rollout_track = r.segment;
 if isfield(rollout_track, 'raceline'), rollout_track.raceline(:) = nan; end
 draw_track_segment(rollout_track, 'HandleVisibility','off');
 draw_obstacles(r.obstacle, 'HandleVisibility','off');
-unsafe = ~T.safe;
-for i = find(~unsafe)'
-    plot(r.points(:,i,1), r.points(:,i,2), '-', 'Color', [0 .45 .74 .35], ...
-        'LineWidth', .9, 'HandleVisibility','off');
+% One colour per trajectory, matching plot_results.m's rollout panel.
+rollout_colors = lines(max(r.n_gen, 1));
+for i = 1:r.n_gen
+    c = rollout_colors(i, :);
+    if i == 1
+        plot(r.points(:,i,1), r.points(:,i,2), '-', 'Color', c, ...
+            'LineWidth', 1.1, 'DisplayName', 'Generated curves');
+    else
+        plot(r.points(:,i,1), r.points(:,i,2), '-', 'Color', c, ...
+            'LineWidth', 1.1, 'HandleVisibility', 'off');
+    end
 end
-for i = find(unsafe)'
-    plot(r.points(:,i,1), r.points(:,i,2), '-', 'Color', [.85 .1 .1 .6], ...
-        'LineWidth', 1.1, 'HandleVisibility','off');
-end
-plot(nan,nan,'-','Color',[0 .45 .74],'DisplayName', ...
-    sprintf('Safe (%d)', nnz(~unsafe)));
-if any(unsafe)
-    plot(nan,nan,'-','Color',[.85 .1 .1],'DisplayName', ...
-        sprintf('Unsafe (%d)', nnz(unsafe)));
-end
-scatter(squeeze(r.points(end,:,1)), squeeze(r.points(end,:,2)), 14, 'k', ...
-    'filled', 'DisplayName', 'Endpoints');
 grid on; axis equal; xlim(xl); ylim(yl); legend('Location','best');
 xlabel('x'); ylabel('y');
 title(sprintf('%s Rollout (%d curves, Safety %.2f%%)', ...

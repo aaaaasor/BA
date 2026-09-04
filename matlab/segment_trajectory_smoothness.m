@@ -1,16 +1,30 @@
 function [cs_values, as_values, details] = segment_trajectory_smoothness( ...
     segment_data, n_segments, n_points, junction_tolerance)
-% CS/AS on every physical generated point, in trajectory/segment order.
-% Never discard a noncoincident segment start. The gap to that start is
-% included in the differences. Only coincident junction endpoints merge.
+% CS/AS on the reconstructed trajectory, in trajectory/segment order.
+% Adjacent segments share one waypoint, so the duplicate copy is merged and
+% each trajectory contributes n_segments*(n_points-1)+1 distinct points --
+% the same 65-point reconstruction the Safety metric and downstream code
+% consume.
+%
+% Junction handling: merging is now the default (junction_tolerance = inf).
+% Keeping both copies inserted an edge of the junction gap length between
+% two normal edges; because that gap is orders of magnitude shorter than the
+% regular spacing, its direction is essentially noise and the two angles it
+% creates dominated CS (measured: 0.4019 with both copies against 0.0711
+% merged, i.e. ~93% of the reported value came from junction artefacts).
+% It also made CS incomparable with single-shot baselines such as SafeFlow
+% and UniConFlow, which have no junctions at all. The discontinuity is still
+% measured and returned in details.junction_gaps, so nothing is hidden -- it
+% is reported as its own quantity instead of being folded into a curvature
+% metric.
 % segment_data: one segment per row, interleaved point features [x y ...].
 if nargin < 4
-    junction_tolerance = 1e-10;
+    junction_tolerance = inf;
 end
 validateattributes(segment_data, {'numeric'}, {'2d', 'nonempty', 'finite'});
 validateattributes(n_segments, {'numeric'}, {'scalar', 'integer', 'positive'});
 validateattributes(n_points, {'numeric'}, {'scalar', 'integer', '>=', 2});
-validateattributes(junction_tolerance, {'numeric'}, {'scalar', 'finite', 'nonnegative'});
+validateattributes(junction_tolerance, {'numeric'}, {'scalar', 'nonnegative'});
 assert(mod(size(segment_data, 1), n_segments) == 0, ...
     'Segment rows must contain complete parent trajectories.');
 feature_dim = size(segment_data, 2) / n_points;

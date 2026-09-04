@@ -41,6 +41,10 @@ end
 tau = max(1.0 - t, eps);
 phi1 = min(omega / (tau ^ 2), phi1_max);
 grad_tol = struct_field_default(constraint_cfg, 'grad_tol', 1e-6);
+% Compare components as first-order distances rather than raw level-set
+% values.  false restores the previous raw-value soft minimum.
+normalize_by_gradient = struct_field_default(constraint_cfg, ...
+    'joint_safety_softmin_normalize_by_gradient', true);
 
 joint_info = obstacle_info;
 joint_info.enabled = obstacle_info.enabled || boundary_info.enabled;
@@ -70,6 +74,24 @@ for point_idx = reshape(point_indices, 1, [])
         -boundary_info.A(boundary_rows, :)];
     if isempty(component_h)
         continue;
+    end
+
+    % Scale normalisation before the soft minimum.  The two families of h
+    % are not in the same units: the track fields are signed distances
+    % (measured |grad h| = 1.000), while the obstacle level set is the
+    % dimensionless superellipse value with measured |grad h| ~ 41.  Taking
+    % a soft minimum of raw values therefore compares metres against a
+    % normalised level-set value and picks the wrong constraint: at the
+    % failing points the obstacle read 0.137 against the rail's 0.017, so
+    % the rail took all the gradient weight even though the obstacle was
+    % 0.003 away and the rail 0.017.  Dividing by |grad h| turns every
+    % component into a first-order distance, which is what a minimum over
+    % constraints is supposed to compare.  Rails are unchanged because
+    % their gradient is already unit norm.
+    if normalize_by_gradient
+        component_scale = max(vecnorm(component_grad, 2, 2), grad_tol);
+        component_h = component_h ./ component_scale;
+        component_grad = component_grad ./ component_scale;
     end
 
     % Stable log-sum-exp evaluation.  The boundary component is already a

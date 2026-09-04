@@ -22,7 +22,7 @@ cfg.second_level_time_steps = 100;
 % The rollout now ends at t=0.99 with no PTZF time shift.  No zero-length
 % tail-refinement interval is added at that endpoint.
 cfg.second_level_time_refine_start_t = 0.99;
-cfg.second_level_time_refine_extra_steps = 0;
+cfg.second_level_time_refine_extra_steps = 00;
 cfg.third_level_time_steps = 100;
 cfg.third_level_time_refine_start_t = 0;
 cfg.third_level_time_refine_extra_steps = 0;
@@ -32,7 +32,7 @@ cfg.t_min = 0.0;
 cfg.rollout_t_max = 0.996;
 % Third level alone stops at 0.995.  Its variance PTZF receives the
 % level-specific +0.005 clock shift configured below.
-cfg.third_level_rollout_t_max = 0.996;
+cfg.third_level_rollout_t_max = 0.999;
 cfg.random_seed = 7;
 cfg.first_level_data_seed = cfg.random_seed + 1;
 cfg.first_level_hyperparameter_seed = cfg.random_seed + 2;
@@ -44,15 +44,17 @@ cfg.second_level_fit_seed = cfg.random_seed + 7;
 % Dedicated seed for the third-level FM source noise. The archived baseline
 % previously inherited the ambient global RNG state at this point.
 cfg.third_level_data_seed = 73;
-cfg.second_level_rollout_seed = cfg.random_seed + 8;
-cfg.third_level_rollout_seed = cfg.second_level_rollout_seed + 100;
+% Alternate only the second-level rollout source noise. The first-level
+% targets and third-level rollout randomness remain unchanged.
+cfg.second_level_rollout_seed = 215;
+cfg.third_level_rollout_seed = 115;
 % First-level trajectories use the same deterministic rejection sampler as
 % the second level: run the requested complete candidates in parallel, reject a whole
 % trajectory only when a hard variance/HOCBF condition fails, then retry the
 % rejected trajectory index with its next reproducible seed until the
 % requested accepted count is available. Geometric safety is not part of
 % seed selection because it is measured independently as an evaluation metric.
-cfg.first_level_seed_filter.enabled = true;
+cfg.first_level_seed_filter.enabled = 1;
 % v4 forces one fresh first-level rollout for this retry-policy revision.
 cfg.first_level_seed_filter.implementation_version = 4;
 cfg.first_level_seed_filter.base_seed = cfg.first_level_rollout_seed;
@@ -202,7 +204,7 @@ cfg.output.live_first_level_rk4_trajectory_close_after_save = false;
 % one live figure and one numbered MP4 per parent.
 cfg.output.live_second_level_rk4_trajectory_enabled = 0;
 cfg.output.live_second_level_rk4_trajectory_parent_samples = ...
-    [76, 61, 46];
+    [56, 44];
 cfg.output.live_second_level_rk4_trajectory_targets_first = true;
 cfg.output.live_second_level_rk4_trajectory_stride = 2;
 cfg.output.live_second_level_rk4_trajectory_delay = 0.01;
@@ -218,7 +220,7 @@ cfg.output.live_third_level_rk4_trajectory_enabled = 0;
 % child segments are evaluated first, so the requested videos are produced
 % without waiting for all preceding parent samples.
 cfg.output.live_third_level_rk4_trajectory_parent_samples = ...
-    [44, 54, 03, 81, 74];
+    [1, 40, 48, 72, 93, 37, 99, 98, 22, 46];
 cfg.output.live_third_level_rk4_trajectory_targets_first = true;
 cfg.output.live_third_level_rk4_alternating_segment_colors = false;
 cfg.output.live_third_level_rk4_trajectory_stride = 2;
@@ -235,9 +237,14 @@ cfg.output.rollout_markers_enabled = 0;
 % 标题和控制台会报 保留数/总数。判据用 cfg.obstacle 的物理几何并在每条弦上
 % 稠密采样, 所以"点安全但连线切角"的那些会被剔除。
 cfg.output.plot_only_obstacle_free_curves = false;
+% Evaluate first-level posterior variance along the saved rollout and export
+% the normalized/raw uncertainty traces.  When seed filtering already
+% produced the same uncertainty array it is reused; otherwise it is queried
+% from the fitted first-level GP without rerunning the rollout.
+cfg.output.first_level_uncertainty_enabled = 0;
 % Skip second-level rollout uncertainty evaluation and its uncertainty
 % plots without changing the second-level rollout itself.
-cfg.output.second_level_uncertainty_enabled = 0;
+cfg.output.second_level_uncertainty_enabled = 1;
 % Evaluate and plot the third-level GP predictive mean along every saved
 % rollout state, with one panel per output dimension.
 cfg.output.third_level_gp_mean_per_output_enabled = false;
@@ -360,7 +367,7 @@ cfg.obstacle.square.track_inside_ratio = 0.50;
 % 0.0582 时下凹 0.0084 > 膨胀 0.006, 所以弦穿进物理障碍 0.0029。要求下凹不
 % 超过膨胀量: d^2/(8(R+delta)) <= delta  =>  delta >= 0.0073, 取 0.010 留余量。
 % 代价: 物理右缝 0.0263 -> 膨胀后 0.0163 (38% 走廊宽), 通道仍然宽敞。
-cfg.obstacle.square.constraint_inflation = 0.010;
+cfg.obstacle.square.constraint_inflation = 0.0;
 
 cfg.obstacle.ellipse.enabled = 1;
 cfg.obstacle.ellipse.track_fraction = 0.52;
@@ -376,7 +383,7 @@ cfg.obstacle.ellipse.semi_major_ratio = 4.5;
 cfg.obstacle.ellipse.semi_minor_ratio = 1.8;
 % Zero aligns the major axis with the local track tangent.
 cfg.obstacle.ellipse.relative_angle = 0.0;
-cfg.obstacle.ellipse.constraint_inflation = 0.006;
+cfg.obstacle.ellipse.constraint_inflation = 0.0;
 
 cfg.obstacle.superellipse.enabled = 1;
 cfg.obstacle.superellipse.track_fraction = 0.214;
@@ -386,7 +393,7 @@ cfg.obstacle.superellipse.semi_major_ratio = 1.0853956186099165;
 cfg.obstacle.superellipse.semi_minor_ratio = 0.32774691228613168;
 cfg.obstacle.superellipse.relative_angle = -0.0024493419584541432;
 cfg.obstacle.superellipse.exponent = 4;
-cfg.obstacle.superellipse.constraint_inflation = 0.005;
+cfg.obstacle.superellipse.constraint_inflation = 0.0;
 
 %% Track Boundary Constraint
 cfg.track_boundary.enabled = 1;
@@ -415,7 +422,7 @@ cfg.variance_constraint.terminal_safety_filter_max_iterations = 200;
 % hard boundary deliberately uses the uncapped prescribed-time gain.
 cfg.track_boundary.phi1_tau_min = 0.01;
 % margin 进 h 的定义 (h = n'*(p-q) - margin), 等于把走廊两侧各收窄这么多。
-cfg.track_boundary.margin = 0.003;
+cfg.track_boundary.margin = 0.0;
 cfg.track_boundary.activation_time = 0.85;
 % 边界/中心线样条类型。必须是 'spline'(C2): track_boundary_cbf_info 的梯度
 % 链式项要用 c'', 而 pchip 只有 C1, 其 c'' 在结点处跳变(最大 696), 会让
@@ -488,8 +495,8 @@ cfg.variance_constraint.third_level_track_boundary_enabled = 1;
 % P1/P5 are snapped exactly to the safe level-2 anchors at the end.  The
 % third-level boundary filter owns only the newly generated interior points.
 cfg.variance_constraint.third_level_track_boundary_points = [2 3 4];
-cfg.variance_constraint.third_level_track_boundary_margin = 0.001;
-cfg.variance_constraint.first_level_track_boundary_phi1_omega = 0.1/100;
+cfg.variance_constraint.third_level_track_boundary_margin = 0.0;
+cfg.variance_constraint.first_level_track_boundary_phi1_omega = 5/100;
 % Once the delayed first-level boundary filter is activated, unsafe points
 % use the prescribed-time blow-up immediately; safe points still use phi0.
 cfg.variance_constraint.first_level_track_boundary_phi1_switch_time = 0.0;
@@ -514,7 +521,7 @@ cfg.variance_constraint.third_level_track_boundary_activation_time = 0.0;
 % All three levels use a soft-to-hard track-boundary schedule.  In the
 % third-level cascade the boundary joins the obstacle rows in one safety QP.
 cfg.variance_constraint.first_level_track_boundary_slack_enabled = true;
-cfg.variance_constraint.first_level_track_boundary_slack_hard_after_time = 0.90;
+cfg.variance_constraint.first_level_track_boundary_slack_hard_after_time = 0.75;
 cfg.variance_constraint.second_level_track_boundary_slack_enabled = true;
 cfg.variance_constraint.second_level_track_boundary_slack_hard_after_time = 0.95;
 cfg.variance_constraint.third_level_track_boundary_slack_enabled = false;
@@ -530,7 +537,7 @@ cfg.variance_constraint.first_level_ptcbf_enabled = true;
 % 收紧末端方差上界: 12 -> 9。beta(t) <= beta_final 是硬 PTCBF 目标，
 % 降低它直接要求一层 rollout 末端停在更低的 GP 方差上。
 cfg.variance_constraint.first_level_terminal_variance_beta_final = 0.1;
-cfg.variance_constraint.first_level_terminal_variance_ptzf_initial_margin = 3;
+cfg.variance_constraint.first_level_terminal_variance_ptzf_initial_margin = 0.1;
 cfg.variance_constraint.first_level_terminal_variance_ptzf_gamma = 0.3;
 cfg.variance_constraint.first_level_terminal_variance_alpha = 8.0;
 cfg.variance_constraint.first_level_ptclf_enabled = false;
@@ -540,7 +547,7 @@ cfg.variance_constraint.first_level_ptclf_enabled = false;
 cfg.variance_constraint.first_level_closed_form_solver_enabled = false;
 cfg.variance_constraint.first_level_hocbf_slack_enabled = false;
 cfg.variance_constraint.first_level_terminal_variance_slack_enabled = false;
-cfg.variance_constraint.first_level_slack_switch_time = 0.90;
+cfg.variance_constraint.first_level_slack_switch_time = 0.75;
 % 前期(t<switch) variance 硬、避障软；后期(t>=switch) variance 软、避障硬
 % (导师方案，实验③)。hocbf 前硬后软，obstacle 前软后硬。
 % First-level obstacle PTCBF: wait until the random source begins to form a
@@ -551,12 +558,12 @@ cfg.variance_constraint.first_level_obstacle_phi1_omega = 0.8/100;
 cfg.variance_constraint.first_level_obstacle_phi1_switch_time = 0.0;
 cfg.variance_constraint.first_level_obstacle_slack_enabled = true;
 cfg.variance_constraint.first_level_obstacle_slack_weight = 10;
-cfg.variance_constraint.first_level_obstacle_slack_hard_after_time = 0.97;
+cfg.variance_constraint.first_level_obstacle_slack_hard_after_time = 0.75;
 % One conservative PTCBF row per controlled point, formed from all active
 % first-level obstacle functions and both track-boundary functions.
 cfg.variance_constraint.first_level_joint_safety_softmin_enabled = true;
 cfg.variance_constraint.first_level_joint_safety_softmin_kappa = 2000.0;
-cfg.variance_constraint.first_level_joint_safety_phi1_omega = 0.8/100;
+cfg.variance_constraint.first_level_joint_safety_phi1_omega = 0.5;
 cfg.variance_constraint.second_level_grad_tol = 1e-6;
 cfg.variance_constraint.second_level_integral_uncertainty_budget = 30;
 cfg.variance_constraint.second_level_hocbf_enabled = 1;
@@ -564,7 +571,7 @@ cfg.variance_constraint.second_level_hocbf_alpha2 = 0.5;
 cfg.variance_constraint.second_level_hocbf_relaxation_bound = 8;
 cfg.variance_constraint.second_level_psi1_margin = 55;
 cfg.variance_constraint.second_level_diagnostics = false;
-cfg.variance_constraint.second_level_ptcbf_enabled = true;
+cfg.variance_constraint.second_level_ptcbf_enabled = 1;
 % 障碍平滑目标(第二层): cost += 0.5*||G*u + e||^2, e/G 来自
 % ||p_{i-1} - 2 p_i + p_{i+1}|| 在一小步预测流之后的值。目的是压住"点 6
 % 被障碍 CBF 推向自己车道之外"造成的折角——第三层的锚点就是第二层的点，
@@ -589,17 +596,17 @@ cfg.variance_constraint.second_level_obstacle_smoothness = struct( ...
     'length_scale', 0.05, 'vicinity_padding', 0.020, ...
     'implementation_version', 1);
 cfg.variance_constraint.second_level_terminal_variance_beta_final = 3.5;
-cfg.variance_constraint.second_level_terminal_variance_ptzf_initial_margin = 0.1;
-cfg.variance_constraint.second_level_terminal_variance_ptzf_gamma = 0.3;
-cfg.variance_constraint.second_level_terminal_variance_alpha = 0.3;
+cfg.variance_constraint.second_level_terminal_variance_ptzf_initial_margin = 0;
+cfg.variance_constraint.second_level_terminal_variance_ptzf_gamma = 0.6;
+cfg.variance_constraint.second_level_terminal_variance_alpha = 1;
 cfg.variance_constraint.second_level_ptclf_enabled = 1;
 cfg.variance_constraint.second_level_closed_form_solver_enabled = false;
 % 第二层保持原来的包络式 PTCLF: Vdot <= cpt*(Vbar - V) + Vbar_dot,
 % Vbar(t) = Vbar0*exp(-cg*t/(1-t))。(第三层才换成 SafeFlow 的 FMBF 形式。)
 cfg.variance_constraint.second_level_anchor_clf_form = 'envelope';
 cfg.variance_constraint.second_level_anchor_clf_ptzf_enabled = true;
-cfg.variance_constraint.second_level_anchor_clf_ptzf_cg = 15.5;
-cfg.variance_constraint.second_level_anchor_clf_cpt = 350;
+cfg.variance_constraint.second_level_anchor_clf_ptzf_cg = 30;
+cfg.variance_constraint.second_level_anchor_clf_cpt = 80;
 cfg.variance_constraint.second_level_anchor_clf_ptzf_initial_margin = 1;
 cfg.variance_constraint.second_level_slack_enabled = true;
 cfg.variance_constraint.second_level_hocbf_slack_enabled = false;
@@ -613,7 +620,7 @@ cfg.variance_constraint.second_level_anchor_clf_slack_hard_after_time = 0.95;
 cfg.variance_constraint.second_level_obstacle_slack_enabled = true;
 cfg.variance_constraint.second_level_obstacle_activation_time = 0.90;
 cfg.variance_constraint.second_level_obstacle_activation_times = ...
-    [0.9, 0.9, 0.30]; % square, ellipse, right superellipse
+    [0.9, 0.9, 0.3]; % square, ellipse, right superellipse
 % 第二层 obstacle PTCBF 的独立 blow-up 增益：仅作用于第二层 h<0 时的
 % phi1=omega/(1-t_eff)^2；不再需要修改三层共用的 cfg.obstacle.phi1_omega。
 cfg.variance_constraint.second_level_obstacle_phi0 = 5.0;
@@ -667,7 +674,7 @@ cfg.third_level_variance_violation_diagnostic_enabled = true;
 % and the staged control decomposition, without the full HOCBF diagnostics.
 cfg.variance_constraint.third_level_control_trace_enabled = false;
 cfg.variance_constraint.third_level_ptcbf_enabled = 1;
-cfg.variance_constraint.third_level_terminal_variance_ptcbf_end_time = 0.85;
+cfg.variance_constraint.third_level_terminal_variance_ptcbf_end_time = 0.9;
 cfg.variance_constraint.third_level_terminal_variance_beta_final = 3.0;
 % Impose the terminal variance PTCBF on each GP output separately rather
 % than on the summed sigma^2.  Measured motivation: near t=1 the summed
@@ -769,10 +776,10 @@ cfg.variance_constraint.third_level_obstacle_phi0 = 80;
 % hard halfspaces (P2/P3/P4), which are handled by the closed-form backend.
 cfg.variance_constraint.third_level_joint_safety_softmin_enabled = true;
 cfg.variance_constraint.third_level_joint_safety_softmin_kappa = 2000.0;
-cfg.variance_constraint.third_level_joint_safety_phi0 = 20.0;
-cfg.variance_constraint.third_level_joint_safety_phi1_early_gain = 2;
-cfg.variance_constraint.third_level_joint_safety_phi1_switch_time = 0.93;
-cfg.variance_constraint.third_level_joint_safety_phi1_omega = 0.01;
+cfg.variance_constraint.third_level_joint_safety_phi0 = 2.0;
+cfg.variance_constraint.third_level_joint_safety_phi1_early_gain = 0.5;
+cfg.variance_constraint.third_level_joint_safety_phi1_switch_time = 0.0;
+cfg.variance_constraint.third_level_joint_safety_phi1_omega = 0.53;
 cfg.variance_constraint.third_level_joint_safety_phi1_max = inf;
 cfg.variance_constraint.third_level_joint_safety_recovery_margin = 0.0;
 cfg.variance_constraint.third_level_hocbf_slack_weight = 0.001;
@@ -784,7 +791,7 @@ cfg.variance_constraint.third_level_anchor_clf_last_slack_weight = 1e8;
 % variance filters have switched off at t=0.8.
 cfg.variance_constraint.third_level_anchor_snap_flow_steps = 5;
 cfg.variance_constraint.third_level_anchor_snap_position_only = false;
-cfg.variance_constraint.third_level_anchor_snap_hold_impl_version = 5;
+cfg.variance_constraint.third_level_anchor_snap_hold_impl_version = 6;
 cfg.variance_constraint.third_level_post_endpoint_overwrite_enabled = false;
 % The former terminal local-cell projection depended on the same
 % phase-search window. Keep it disabled now that boundary classification
@@ -820,3 +827,4 @@ if strcmp(cfg.scenario, 'racing')
         'Racing_ThirdLevel_Rollout_SerialTest.mat');
 end
 end
+

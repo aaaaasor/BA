@@ -64,6 +64,15 @@ for boundary_idx = 1:2
         implicit_field_grid(fields, boundary_idx, x_mesh, y_mesh) - margin;
 end
 
+% Match joint_safety_softmin_info: normalise components to first-order
+% distances before the soft minimum, otherwise this plot shows a different
+% safe set than the one the QP actually enforces.
+if struct_field_default(variance_cfg, ...
+        'joint_safety_softmin_normalize_by_gradient', true)
+    component_h = softmin_normalize_grid(component_h, x_grid, y_grid, ...
+        struct_field_default(variance_cfg, 'grad_tol', 1e-6));
+end
+
 % Stable soft minimum: -log(sum(exp(-kappa*h_i)))/kappa.
 h_min = min(component_h, [], 3);
 weight_sum = sum(exp(-kappa .* (component_h - h_min)), 3);

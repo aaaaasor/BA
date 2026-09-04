@@ -38,13 +38,13 @@ control_trace_u_only = collect_control_trace && struct_field_default( ...
 	constraint_cfg, 'control_trace_u_only', false);
 capture_sample_failures = constrained && struct_field_default( ...
 	constraint_cfg, 'seed_filter_reject_failed_rollouts', false);
-% true  (默认, 原有行为): k1..k4 每级各解一次 QP。
-% false (SafeFlow Alg.1 口径): 只在 k1 解一次 QP, 取出修正量 u 后四级共用;
+% true  (旧行为): k1..k4 每级各解一次 QP。
+% false (默认, SafeFlow Alg.1 口径): 只在 k1 解一次 QP, 取出修正量 u 后四级共用;
 %   k2..k4 仍调用 predict_gp_stats 拿该级的 GP 均值 mu 与方差 sigma^2, 因此
 %   累积方差的 RK4 积分不受影响 (q1..q4 齐全), 只有安全/方差修正在一步内冻结。
 %   代价: 时变约束的切换点 (0.85/0.95 等) 只在外层时间网格上判定。
 u_per_stage = ~constrained || struct_field_default( ...
-	constraint_cfg, 'u_per_stage', true);
+	constraint_cfg, 'u_per_stage', false);
 % 分段冻结: t < u_freeze_before_time 的步冻结 u, 之后逐级重解。
 % 末段 phi ~ (1-t)^-2 一步之内可涨 40% 以上, 冻结会实质改变轨迹; 前段一步
 % 只涨约 10%, 冻结几乎无损。默认 0 = 不启用分段（由 u_per_stage 全局决定）。
@@ -524,6 +524,10 @@ if do_anchor_snap_matrix
 	% obstacle rows through u2/u3/u4, then uses u5 to keep P5 fixed.
 	snap_constraint_cfg_matrix.endpoint_hold_velocity_matrix = snap_matrix;
 end
+snap_matrix_target_fixed = [];
+if do_anchor_snap_matrix
+	snap_matrix_target_fixed = sample_cfg.anchor_clf_target(snap_target_mask);
+end
 % 诊断用: QP 在某一步失败时, 把已经积分完的部分轨迹落盘再把错误原样抛出。
 % 成功的运行一行都不经过 catch, 数值结果完全不受影响。
 % try
@@ -535,7 +539,7 @@ for step_idx = 1:n_steps % 对当前 sample 的每个时间步进行积分
 	% flow matching. All following RK stages preserve M*x through the
 	% hard velocity equality M*(mu+u)=0.
 	if do_anchor_snap_matrix && step_idx >= snap_path_index
-		snap_matrix_target = sample_cfg.anchor_clf_target(snap_target_mask);
+		snap_matrix_target = snap_matrix_target_fixed;
 		y_now = snap_matrix * x_now + snap_offset;
 		snap_rhs = [snap_matrix_target - y_now; ...
 			zeros(size(snap_preserve_matrix, 1), 1)];
@@ -661,6 +665,24 @@ for step_idx = 1:n_steps % 对当前 sample 的每个时间步进行积分
 	if do_anchor_snap && (step_idx + 1) >= snap_path_index
 		sample_path(step_idx + 1, snap_indices) = snap_target;
 	end
+	% Matrix snap after the committed RK4 update, mirroring the vector snap
+	% above.  The step-start projection alone is only sufficient when the
+	% hard endpoint velocity equality M*(mu+u)=0 holds at every RK stage.
+	% With one QP per step (u_per_stage=false) the frozen u cancels mu only
+	% at k1, so M*k_i = M*(mu_i - mu_1) != 0 for i=2,3,4 and the endpoint
+	% drifts within the step.  Adjacent segments then leave their shared
+	% waypoint at different places (measured 0.0019 and 0.0022), which is
+	% enough to push one copy into an obstacle.  Re-projecting here restores
+	% P5^(j) = P1^(j+1) = the second-level target exactly.
+	if do_anchor_snap_matrix && (step_idx + 1) >= snap_path_index
+		x_committed_snap = reshape(sample_path(step_idx + 1, :), [], 1);
+		y_committed = snap_matrix * x_committed_snap + snap_offset;
+		snap_rhs_post = [snap_matrix_target_fixed - y_committed; ...
+			zeros(size(snap_preserve_matrix, 1), 1)];
+		x_committed_snap = x_committed_snap + snap_projector * snap_rhs_post;
+		sample_path(step_idx + 1, :) = reshape(x_committed_snap, 1, []);
+		x_now = x_committed_snap;
+	end
 	% Plot the trajectory corresponding to the state just committed above.
 	% This is deliberately after snap-and-hold, so the figure shows the
 	% actual sample_path row that downstream code will consume.
@@ -670,9 +692,9 @@ for step_idx = 1:n_steps % 对当前 sample 的每个时间步进行积分
 		times(step_idx + 1), x_committed_for_plot);
 	% 矩阵型 CLF 的 snap-and-hold: 最小范数投影，把 M*z+offset 精确
 	% 拉回 target，零空间方向（段内其余自由度）不受影响。
-	% Matrix snap is not repeated after RK4. The final operation is
-	% constrained flow matching; its hard endpoint velocity equality keeps
-	% P1/P5 fixed while obstacle PTCBF updates P2/P3/P4.
+	% The post-RK4 projection above completes matrix snap-and-hold even
+	% when one frozen QP correction is reused across all four RK stages.
+	% P1/P5 end every committed tail step exactly at their anchor targets.
 	% Update only the soft temporal phase reference after the complete RK4
 	% state is committed. The fixed branch and nominal phase never move.
 	if constrained && struct_field_default(sample_cfg, ...
