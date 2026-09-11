@@ -40,8 +40,9 @@ capture_sample_failures = constrained && struct_field_default( ...
 	constraint_cfg, 'seed_filter_reject_failed_rollouts', false);
 % true  (旧行为): k1..k4 每级各解一次 QP。
 % false (默认, SafeFlow Alg.1 口径): 只在 k1 解一次 QP, 取出修正量 u 后四级共用;
-%   k2..k4 仍调用 predict_gp_stats 拿该级的 GP 均值 mu 与方差 sigma^2, 因此
-%   累积方差的 RK4 积分不受影响 (q1..q4 齐全), 只有安全/方差修正在一步内冻结。
+%   方差值、方差梯度和修正量 u 都只在 k1 计算一次；k2..k4 只重新
+%   计算该级 GP 均值，并冻结 q2=q3=q4=q1。因此每个外层 RK4 步只有
+%   一次完整方差/梯度预测和一次 QP。
 %   代价: 时变约束的切换点 (0.85/0.95 等) 只在外层时间网格上判定。
 u_per_stage = ~constrained || struct_field_default( ...
 	constraint_cfg, 'u_per_stage', false);
@@ -56,16 +57,48 @@ end
 diagnostics.max_cumulative_variance = 0.0;
 diagnostics.rollout_elapsed_seconds = 0.0; % 初始化 roll-out 时间统计
 
+%% Parallel Runtime Setup (excluded from per-trajectory inference timing)
+% Pool construction, model serialization, and a one-query cache warm-up are
+% one-time runtime setup costs. Warm every process worker before starting the
+% inference timer; the ordinary parfor broadcast path is retained because it
+% is robust when rk4_rollout is called from seed-filter helper functions.
+worker_count = ensure_parallel_pool(parallel_cfg, n_samples);
+if worker_count > 0 && constrained && struct_field_default( ...
+		constraint_cfg, 'live_trajectory_plot_enabled', false)
+	fprintf(['  Live trajectory animation enabled; running rollout ', ...
+		'serially so all samples share one ordered figure.\n']);
+	worker_count = 0;
+end
+parfor_opts = [];
+if worker_count > 0
+	chunk_size = max(1, round(struct_field_default( ...
+		parallel_cfg, 'subrange_size', 1)));
+	parfor_opts = parforOptions(gcp(), ...
+		'RangePartitionMethod', 'fixed', 'SubrangeSize', chunk_size);
+	warm_query = [times(1); reshape(x_init(1, :), [], 1)];
+	warm_futures = parfevalOnAll(gcp(), @warm_worker_prediction_cache, 0, ...
+		model_collection, warm_query, constrained);
+	wait(warm_futures);
+	delete(warm_futures);
+end
+
 %% Global Terminal Bound
 rollout_timer = tic; % 从开始到现在总共多久
 beta0_values = nan(n_samples, 1);
 terminal_h0_global = nan;
 if constrained
-	for beta_sample_idx = 1:n_samples
-		x0 = reshape(x_init(beta_sample_idx, :), [], 1);
-		beta0_values(beta_sample_idx) = sum(arrayfun(@(i) ...
-			model_collection.model.output_models{i}.predict_variance([times(1); x0]), ...
-			1:numel(model_collection.model.output_models)));
+	if worker_count > 0
+		parfor (beta_sample_idx = 1:n_samples, parfor_opts)
+			x0 = reshape(x_init(beta_sample_idx, :), [], 1);
+			beta0_values(beta_sample_idx) = initial_predictive_variance( ...
+				model_collection, times(1), x0);
+		end
+	else
+		for beta_sample_idx = 1:n_samples
+			x0 = reshape(x_init(beta_sample_idx, :), [], 1);
+			beta0_values(beta_sample_idx) = initial_predictive_variance( ...
+				model_collection, times(1), x0);
+		end
 	end
 	if struct_field_default(constraint_cfg, ...
 			'ptcbf_enabled', false)
@@ -164,15 +197,6 @@ for sample_idx = 1:n_samples
 	end
 	sample_inputs{sample_idx} = sample_input;
 end
-% 检查/建立并行池并返回实际 worker 数。返回 0 表示并行关闭、工具箱不可用、
-% 建池失败后回退串行，或任务数不超过 1；此时执行下面的普通 for 分支。
-worker_count = ensure_parallel_pool(parallel_cfg, n_samples);
-if worker_count > 0 && constrained && struct_field_default( ...
-		constraint_cfg, 'live_trajectory_plot_enabled', false)
-	fprintf(['  Live trajectory animation enabled; running rollout ', ...
-		'serially so all samples share one ordered figure.\n']);
-	worker_count = 0;
-end
 % parfor 不能让多个 worker 任意扩展同一个输出数组，因此先按 sample 数预分配。
 % 下面两个量都只在各自的 sample_idx 位置写入，MATLAB 可将其识别为切片变量；
 % 不同 worker 不会写同一位置，所以无需锁或其它同步机制。
@@ -185,8 +209,6 @@ if worker_count > 0
 	% 使用当前并行池，并把循环范围固定切成大小为 1 的子范围。
 	% 因而每个 worker 每次只领取一个 sample；完成后再领取下一条轨迹。
 	% 这可避免耗时不同的多条轨迹被预先打包给同一 worker 而造成负载不均。
-	parfor_opts = parforOptions(gcp(), ...
-		'RangePartitionMethod', 'fixed', 'SubrangeSize', 1);
 	% 例如第三层 n_samples=80、worker_count=8 时，最多 8 条轨迹同时运行，
 	% 80 个单轨迹任务由 8 个 worker 持续领取，理想情况下约经历 10 轮。
 	parfor_timer = tic;
@@ -287,6 +309,20 @@ if collect_diagnostics
 		diagnostics.rollout_elapsed_seconds, ...
 		struct_field_default(constraint_cfg, ...
 		'closed_form_solver_enabled', false));
+end
+end
+
+function variance = initial_predictive_variance(model_collection, t, x)
+variance = sum(arrayfun(@(i) ...
+	model_collection.model.output_models{i}.predict_variance([t; x]), ...
+	1:numel(model_collection.model.output_models)));
+end
+
+function warm_worker_prediction_cache(model_collection, query, constrained)
+if constrained
+	predict_gp_stats(model_collection.model, query);
+else
+	predict_gp_mean_only(model_collection.model, query);
 end
 end
 
@@ -573,9 +609,9 @@ for step_idx = 1:n_steps % 对当前 sample 的每个时间步进行积分
 	x_k2 = x_now + 0.5 * dt * k1;
 	t_k2 = t_now + 0.5 * dt;
 	if freeze_now
-		stats_k2 = predict_gp_stats(model_collection.model, [t_k2; x_k2]);
-		k2 = stats_k2.mu + u_frozen;   % 冻结 k1 的修正量
-		q2 = stats_k2.sigma2;          % 方差积分仍用本级的 sigma^2
+		mu_k2 = predict_gp_mean_only(model_collection.model, [t_k2; x_k2]);
+		k2 = mu_k2 + u_frozen;         % 冻结 k1 的修正量
+		q2 = q1;                       % 方差和梯度每个外层步只算一次
 	elseif constrained
 		stage_constraint_cfg = rk_stage_constraint_cfg(t_k2, ...
 			snap_start_time, sample_cfg, snap_constraint_cfg, ...
@@ -600,9 +636,9 @@ for step_idx = 1:n_steps % 对当前 sample 的每个时间步进行积分
 	x_k3 = x_now + 0.5 * dt * k2;
 	t_k3 = t_now + 0.5 * dt;
 	if freeze_now
-		stats_k3 = predict_gp_stats(model_collection.model, [t_k3; x_k3]);
-		k3 = stats_k3.mu + u_frozen;
-		q3 = stats_k3.sigma2;
+		mu_k3 = predict_gp_mean_only(model_collection.model, [t_k3; x_k3]);
+		k3 = mu_k3 + u_frozen;
+		q3 = q1;
 	elseif constrained
 		stage_constraint_cfg = rk_stage_constraint_cfg(t_k3, ...
 			snap_start_time, sample_cfg, snap_constraint_cfg, ...
@@ -627,9 +663,9 @@ for step_idx = 1:n_steps % 对当前 sample 的每个时间步进行积分
 	x_k4 = x_now + dt * k3;
 	t_k4 = t_now + dt;
 	if freeze_now
-		stats_k4 = predict_gp_stats(model_collection.model, [t_k4; x_k4]);
-		k4 = stats_k4.mu + u_frozen;
-		q4 = stats_k4.sigma2;
+		mu_k4 = predict_gp_mean_only(model_collection.model, [t_k4; x_k4]);
+		k4 = mu_k4 + u_frozen;
+		q4 = q1;
 	elseif constrained
 		stage_constraint_cfg = rk_stage_constraint_cfg(t_k4, ...
 			snap_start_time, sample_cfg, snap_constraint_cfg, ...

@@ -1,4 +1,15 @@
-function safeflow_nn_demo(n_train_steps, n_gen)
+function safeflow_nn_demo(n_train_steps, n_gen, include_ustg, train_opts)
+% train_opts: options forwarded to safeflow_nn_train (e.g. hidden_width,
+% n_train).  Empty keeps the defaults, so existing calls are unchanged.  The
+% resolved options travel on net.training_options and are written into each
+% archive's run_reproduce.m, so an archive retrains at its own width.
+if nargin < 4 || isempty(train_opts), train_opts = struct(); end
+% include_ustg: also run the u_per_stage variant (default false).  That variant
+% re-solves the QP at every RK4 stage, which is NOT what Algorithm 1 says and
+% never enters the archive -- it exists only to quantify the cost of the
+% deviation.  It is 4x the QP count and 4x the wall time, so it is off by
+% default; pass true when that comparison is actually wanted.
+if nargin < 3 || isempty(include_ustg), include_ustg = false; end
 %SAFEFLOW_NN_DEMO FM (NN) 与 SafeFlow (NN) 的完整对比。
 % Safety 判据用真实边界 h >= 0，不含引导用的 margin。
 if nargin < 1 || isempty(n_train_steps), n_train_steps = 20000; end
@@ -6,25 +17,53 @@ if nargin < 2 || isempty(n_gen),         n_gen = 100; end
 this_dir = fileparts(mfilename('fullpath'));
 out_dir  = fullfile(this_dir, 'outputs');
 
-net = safeflow_nn_train(n_train_steps, false);
+net = safeflow_nn_train(n_train_steps, false, train_opts);
+
+% Guidance activation time.  The paper's navigation experiment leaves the
+% CBF-QP off until t = 0.5; the supervisor asked for the reproduction to
+% constrain from the first step instead, so the whole rollout is guided.
+% The paper's own 0.5 schedule is kept archived under
+% outputs/<racing>safeflow_tbar05_paper for comparison.
+activation_time = 0.0;
+% High-gain stress configuration requested by the supervisor: activate the
+% second-order pole from the first guided step so divergent pre-projection
+% trajectories and terminal-projection failures are reported explicitly.
+phi1_form = 'second_order';
+phi1_omega = 20.0;
+phi1_switch_time = 0.0;
+slack_weight = 1e4;
 
 % name, mode, u_per_stage
-runs = { 'fm',           'fm',       false
-         'safeflow',     'safeflow', false     % Alg.1 字面：每步解一次 u
-         'safeflow_ustg','safeflow', true  };  % 每个 RK4 级重解 u（偏离）
+runs = { 'fm',       'fm',       false; ...
+         'safeflow', 'safeflow', false };   % Alg.1 literal: one u per RK4 step
+if include_ustg
+    % Deviation from Algorithm 1, kept only to price the cost; never archived.
+    runs(end+1,:) = { 'safeflow_ustg', 'safeflow', true };
+end
 
 R = struct();
 for i = 1:size(runs,1)
     nm = runs{i,1};
     fprintf('\n===== %s  (u_per_stage=%d) =====\n', nm, runs{i,3});
+    % No fmincon fallback: (32) is solved by sequential linearisation alone.
+    % The paper states the terminal projection without naming a solver, so
+    % adding a second one would be our implementation choice, not the method.
+    % A point that stays infeasible is recorded as a terminal-filter failure
+    % and shows up as an unsafe point in the Safety metric.
     r = safeflow_nn_rollout(net, runs{i,2}, n_gen, ...
-        struct('u_per_stage', runs{i,3}));
-    r.metrics = compute_metrics(r, net);
+        struct('u_per_stage', runs{i,3}, 'fmincon_fallback', false, ...
+               'activation_time', activation_time, ...
+               'phi1_form', phi1_form, ...
+               'phi1_omega', phi1_omega, ...
+               'phi1_switch_time', phi1_switch_time, ...
+               'slack_weight', slack_weight));
+    r.metrics = safeflow_nn_metrics(r);
     print_row(r);
     R.(nm) = r;
 end
 
 fprintf('\n---- u 更新频率对 Time 的影响 (SafeFlow, %d 条) ----\n', n_gen);
+if include_ustg
 a = R.safeflow.metrics; b = R.safeflow_ustg.metrics;
 fprintf('  %-22s %10s %10s\n', '', '每步一次', '每级一次');
 fprintf('  %-22s %10d %10d\n', 'QP 次数',    a.n_qp, b.n_qp);
@@ -35,6 +74,7 @@ fprintf('  %-22s %10.4f %10.4f\n', 'CS', a.cs, b.cs);
 fprintf('  %-22s %10.4f %10.4f\n', 'AS', a.as, b.as);
 fprintf('  倍数: QP %.2fx, Time %.2fx\n', b.n_qp/max(a.n_qp,1), ...
     b.time_seconds/max(a.time_seconds,eps));
+end
 
 %% ---------- 保存 ----------
 mat = fullfile(out_dir, 'SafeFlowNN_results.mat');
@@ -67,62 +107,6 @@ archive_safeflow_nn_run(R, net, cfg, n_train_steps, n_gen);
 end
 
 % =====================================================================
-function m = compute_metrics(r, ~)
-P = r.points;                      % (65, n, 2)
-[nPt, n, ~] = size(P);
-
-% ---- Safety：真实边界 h >= 0，不含 margin ----
-ok = true(1,n); hmin_o = inf; hmin_b = inf;
-for i = 1:n
-    for k = 1:nPt
-        p = [P(k,i,1); P(k,i,2)];
-        for jo = 1:size(r.obstacle.centers,2)
-            h = obstacle_level_and_gradient(p, r.obstacle, jo);
-            hmin_o = min(hmin_o, h);
-            if h < -1e-8, ok(i) = false; end
-        end
-        for bi = 1:2
-            hr = evaluate_track_implicit_field(r.geometry.implicit_fields, bi, p);
-            hmin_b = min(hmin_b, hr);          % 不减 margin
-            if hr < -1e-8, ok(i) = false; end
-        end
-    end
-end
-m.safety = mean(ok);
-m.min_obstacle_h = hmin_o;
-m.min_boundary_h = hmin_b;
-
-% ---- CS / AS ----
-cs = nan(n,1); as = nan(n,1);
-for i = 1:n
-    xy = squeeze(P(:,i,1:2));
-    w  = diff(xy,1,1);
-    L  = sqrt(sum(w.^2,2));
-    den = L(1:end-1).*L(2:end);
-    ct  = ones(size(den));
-    v_  = den > eps;
-    ct(v_) = sum(w(1:end-1,:).*w(2:end,:),2)./den(v_);
-    cs(i) = mean(1 - min(max(ct,-1),1));
-    acc = diff(xy,2,1);
-    as(i) = mean(sqrt(sum(acc.^2,2)));
-end
-m.cs = mean(cs); m.as = mean(as);
-m.cs_per = cs;   m.as_per = as;
-
-% ---- Time：采样 + rollout + 终端滤波，除以条数 ----
-m.time_seconds = r.total_seconds_per_traj;
-m.sample_seconds = r.sample_seconds;
-m.rollout_seconds = r.rollout_seconds;
-m.terminal_seconds = r.terminal_seconds;
-m.terminal_failed = r.terminal_failed;
-m.slack_active = r.slack_active;
-m.n_qp = r.n_qp;
-
-% ---- KL：复用主流程的 Racing_KL_Reference.mat（同网格同带宽，跨方法可比）----
-m.final_xy = squeeze(P(end,:,1:2));
-[m.kl, m.kl_details] = safeflow_nn_kl(m.final_xy);
-end
-
 function print_row(r)
 m = r.metrics;
 fprintf('  Safety %6.2f%%   KL %.4f   CS %.4f   AS %.4f\n', ...

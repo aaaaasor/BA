@@ -4,13 +4,13 @@ function sweep = run_simple_1d_global_gp_50x40_seed345_sn025()
 % Static figures are exported as EMF only; no video is generated.
 
 root = fileparts(mfilename('fullpath'));
-out = fullfile(root, 'outputs', '1d case全局GP训练阈值实验_50x40_seed345_sn025');
+out = fullfile(root, 'outputs', ['1d case' char([20840 23616 71 80])]);
 if ~exist(out, 'dir'), mkdir(out); end
 maxNumCompThreads(1);
 
 % Clean, human-readable thresholds.  The full-data model is reported as
 % threshold 0 in the comparison curve, but it is fitted in one batch.
-thresholds = [0.20, 0.15, 0.10, 0.05];
+thresholds = [0.14, 0.11, 0.08, 0.05];
 cfg = struct('version', 1, 'n_train', 50, 'n_time_slices', 40, ...
     'n_rollouts', 1000, 'n_rollout_steps', 100, 'data_seed', 27, ...
     'append_seed', 345, ...

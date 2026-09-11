@@ -14,9 +14,12 @@
 % 注意: 这是原地修改（handle 对象），调用之后**不能再向该模型添加数据**。
 % 必须在 fit_or_load_loggp_model 之后、rollout 之前调用。磁盘上的缓存
 % 文件不受影响，仍然带着完整的 K。
-function model_collection = strip_model_for_prediction(model_collection, label)
+function model_collection = strip_model_for_prediction(model_collection, label, use_mex)
 if nargin < 2
 	label = '';
+end
+if nargin < 3
+	use_mex = false;
 end
 if ~isfield(model_collection, 'model') || ...
 		~isfield(model_collection.model, 'output_models')
@@ -24,6 +27,7 @@ if ~isfield(model_collection, 'model') || ...
 end
 
 output_models = model_collection.model.output_models;
+mex_enabled = use_mex && exist('gp_kernel_grad_mex', 'file') == 3;
 freed_bytes = 0;
 n_stripped = 0;
 for output_idx = 1:numel(output_models)
@@ -31,10 +35,16 @@ for output_idx = 1:numel(output_models)
 	if ~isprop(gp, 'LocalGP_set') || isempty(gp.LocalGP_set)
 		continue;
 	end
+	if isprop(gp, 'PredictionOnly')
+		gp.PredictionOnly = true;
+	end
 	for local_idx = 1:numel(gp.LocalGP_set)
 		local_gp = gp.LocalGP_set{local_idx};
 		if isempty(local_gp)
 			continue;
+		end
+		if ismethod(local_gp, 'set_prediction_mex_enabled')
+			local_gp.set_prediction_mex_enabled(mex_enabled);
 		end
 		touched = false;
 		if isprop(local_gp, 'K') && ~isempty(local_gp.K)

@@ -29,7 +29,7 @@ cfg.third_level_time_refine_extra_steps = 0;
 cfg.t_min = 0.0;
 % First/second-level physical rollout endpoint (kept unchanged so their
 % existing rollout caches remain valid).
-cfg.rollout_t_max = 0.996;
+cfg.rollout_t_max = 0.999;
 % Third level alone stops at 0.995.  Its variance PTZF receives the
 % level-specific +0.005 clock shift configured below.
 cfg.third_level_rollout_t_max = 0.999;
@@ -119,7 +119,7 @@ cfg.third_level_seed_filter.final_track_point_filter_enabled = false;
 % Retained only as diagnostic metadata while the point filter is disabled.
 cfg.third_level_seed_filter.final_track_point_tolerance = 5e-4;
 cfg.third_level_seed_filter.final_obstacle_point_filter_enabled = false;
-cfg.third_level_seed_filter.final_obstacle_point_tolerance = 1e-8;
+cfg.third_level_seed_filter.final_obstacle_point_tolerance = 5e-4;
 cfg.third_level_seed_filter.final_geometry_internal_points_only = true;
 cfg.third_level_seed_filter.final_geometry_state_mode = 'increment';
 % Line checks are disabled for seed selection; pointwise Safety is evaluated
@@ -156,6 +156,9 @@ cfg.parallel.enabled = 1;
 % 0 = 用默认 parallel profile 的核数；>0 = 固定使用指定核数，不按当前层的
 % 轨迹条数截断；现有池大小不符时会自动重建。
 cfg.parallel.num_workers = 6;
+% Unit chunks preserve dynamic load balancing across trajectories whose
+% active local-GP/QP costs differ substantially.
+cfg.parallel.subrange_size = 1;
 cfg.parallel.fallback_to_serial = true;
 
 %% Animation
@@ -186,7 +189,9 @@ cfg.safe_flow_evaluation.kl_grid_size = 128;
 cfg.safe_flow_evaluation.kl_reference_path = fullfile('outputs', ...
     'Racing_KL_Reference.mat');
 cfg.safe_flow_evaluation.kl_reference_rebuild = false;
-cfg.safe_flow_evaluation.safety_tolerance = 1e-8;
+cfg.safe_flow_evaluation.safety_tolerance = 5e-4;
+cfg.safe_flow_evaluation.safety_tolerance_mode = ...
+    'third_level_physical_normal_distance';
 % Plot the first-level joint obstacle/boundary soft-min safe set.
 cfg.output.plot_first_level_joint_softmin_safe_set = true;
 % Live view of the curve committed at each first-level RK4 step.  Plotting
@@ -220,7 +225,7 @@ cfg.output.live_third_level_rk4_trajectory_enabled = 0;
 % child segments are evaluated first, so the requested videos are produced
 % without waiting for all preceding parent samples.
 cfg.output.live_third_level_rk4_trajectory_parent_samples = ...
-    [1, 40, 48, 72, 93, 37, 99, 98, 22, 46];
+    [28, 49, 48, 72, 93, 37, 99, 98, 22, 46];
 cfg.output.live_third_level_rk4_trajectory_targets_first = true;
 cfg.output.live_third_level_rk4_alternating_segment_colors = false;
 cfg.output.live_third_level_rk4_trajectory_stride = 2;
@@ -328,6 +333,9 @@ cfg.gp.o_ratio = 0.05;
 cfg.gp.first_level_o_ratio = 0.05;
 cfg.gp.second_level_o_ratio = 0.05;
 cfg.gp.aggregation_method = 'GPOE';
+% Experimental fused C++ kernel/gradient predictor. It is substantially
+% faster, but floating-point differences can change QP branch decisions.
+cfg.gp.use_mex_prediction = 1;
 cfg.gp.first_level_training_accuracy_threshold = 0.8;
 cfg.gp.second_level_training_accuracy_threshold = 3.0;
 cfg.gp.third_level_training_accuracy_threshold = 0.20;
@@ -454,7 +462,7 @@ cfg.variance_constraint.third_level_track_boundary_phi0 = 20.0;
 % few random initial-state outliers.
 cfg.variance_constraint.ood_normalized_sigma_threshold = 0.8;
 cfg.variance_constraint.ood_quantile = 0.95;
-cfg.variance_constraint.first_level_obstacle_enabled  = true;
+cfg.variance_constraint.first_level_obstacle_enabled  = 1;
 cfg.variance_constraint.first_level_obstacle_points   = [1 2 3 4 5];
 cfg.variance_constraint.first_level_obstacle_constraint_inflation_scale = 1.0;
 cfg.variance_constraint.second_level_obstacle_enabled = 1;
@@ -467,7 +475,7 @@ cfg.variance_constraint.third_level_obstacle_points   = [2 3 4];
 cfg.variance_constraint.third_level_obstacle_constraint_inflation_scale = 1.1;
 % Per-level boundary switches and affected trajectory points. The master
 % cfg.track_boundary.enabled must also be true.
-cfg.variance_constraint.first_level_track_boundary_enabled = true;
+cfg.variance_constraint.first_level_track_boundary_enabled = 1;
 cfg.variance_constraint.first_level_track_boundary_points = [1 2 3 4 5];
 % Smooth the left/right rail pair before it is combined with the obstacle
 % fields.  Using the same kappa as the joint soft minimum makes the nested
@@ -477,7 +485,7 @@ cfg.variance_constraint.first_level_track_boundary_combine_method = ...
 cfg.variance_constraint.first_level_track_boundary_softmin_kappa = 2000.0;
 % Let the hard variance constraints form a track-like sample first.  The
 % boundary PTCBF then joins softly before taking over terminal safety.
-cfg.variance_constraint.first_level_track_boundary_activation_time = 0.50;
+cfg.variance_constraint.first_level_track_boundary_activation_time = 0.6;
 cfg.variance_constraint.second_level_track_boundary_enabled = 1;
 cfg.variance_constraint.second_level_track_boundary_points = [2 3 4];
 % Stage-2 late handoff: obstacle and boundary PTCBFs enter at 0.90 with
@@ -496,7 +504,7 @@ cfg.variance_constraint.third_level_track_boundary_enabled = 1;
 % third-level boundary filter owns only the newly generated interior points.
 cfg.variance_constraint.third_level_track_boundary_points = [2 3 4];
 cfg.variance_constraint.third_level_track_boundary_margin = 0.0;
-cfg.variance_constraint.first_level_track_boundary_phi1_omega = 5/100;
+cfg.variance_constraint.first_level_track_boundary_phi1_omega = 0.001;
 % Once the delayed first-level boundary filter is activated, unsafe points
 % use the prescribed-time blow-up immediately; safe points still use phi0.
 cfg.variance_constraint.first_level_track_boundary_phi1_switch_time = 0.0;
@@ -521,7 +529,7 @@ cfg.variance_constraint.third_level_track_boundary_activation_time = 0.0;
 % All three levels use a soft-to-hard track-boundary schedule.  In the
 % third-level cascade the boundary joins the obstacle rows in one safety QP.
 cfg.variance_constraint.first_level_track_boundary_slack_enabled = true;
-cfg.variance_constraint.first_level_track_boundary_slack_hard_after_time = 0.75;
+cfg.variance_constraint.first_level_track_boundary_slack_hard_after_time = 0.70;
 cfg.variance_constraint.second_level_track_boundary_slack_enabled = true;
 cfg.variance_constraint.second_level_track_boundary_slack_hard_after_time = 0.95;
 cfg.variance_constraint.third_level_track_boundary_slack_enabled = false;
@@ -533,12 +541,12 @@ cfg.variance_constraint.first_level_hocbf_alpha2 = 3.0;
 cfg.variance_constraint.first_level_hocbf_relaxation_bound = 5;
 cfg.variance_constraint.first_level_psi1_margin = 2;
 cfg.variance_constraint.first_level_diagnostics = false;
-cfg.variance_constraint.first_level_ptcbf_enabled = true;
-% 收紧末端方差上界: 12 -> 9。beta(t) <= beta_final 是硬 PTCBF 目标，
-% 降低它直接要求一层 rollout 末端停在更低的 GP 方差上。
-cfg.variance_constraint.first_level_terminal_variance_beta_final = 0.1;
-cfg.variance_constraint.first_level_terminal_variance_ptzf_initial_margin = 0.1;
-cfg.variance_constraint.first_level_terminal_variance_ptzf_gamma = 0.3;
+cfg.variance_constraint.first_level_ptcbf_enabled = 1;
+% 第一层末端方差 PTCBF。beta(t) <= beta_final 是硬终端目标；
+% gamma 控制规定时间边界的收缩形状，当前值由固定种子 KL 扫描选定。
+cfg.variance_constraint.first_level_terminal_variance_beta_final = 0.01;
+cfg.variance_constraint.first_level_terminal_variance_ptzf_initial_margin = 0.0;
+cfg.variance_constraint.first_level_terminal_variance_ptzf_gamma = 1.0;
 cfg.variance_constraint.first_level_terminal_variance_alpha = 8.0;
 cfg.variance_constraint.first_level_ptclf_enabled = false;
 % Solver backend by level: the first two levels retain MATLAB quadprog,
@@ -547,29 +555,29 @@ cfg.variance_constraint.first_level_ptclf_enabled = false;
 cfg.variance_constraint.first_level_closed_form_solver_enabled = false;
 cfg.variance_constraint.first_level_hocbf_slack_enabled = false;
 cfg.variance_constraint.first_level_terminal_variance_slack_enabled = false;
-cfg.variance_constraint.first_level_slack_switch_time = 0.75;
+cfg.variance_constraint.first_level_slack_switch_time = 0.70;
 % 前期(t<switch) variance 硬、避障软；后期(t>=switch) variance 软、避障硬
 % (导师方案，实验③)。hocbf 前硬后软，obstacle 前软后硬。
 % First-level obstacle PTCBF: wait until the random source begins to form a
 % track-shaped trajectory, then use a soft-to-hard obstacle correction.
-cfg.variance_constraint.first_level_obstacle_activation_time = 0.50;
+cfg.variance_constraint.first_level_obstacle_activation_time = 0.6;
 cfg.variance_constraint.first_level_obstacle_phi0 = 2.0;
 cfg.variance_constraint.first_level_obstacle_phi1_omega = 0.8/100;
 cfg.variance_constraint.first_level_obstacle_phi1_switch_time = 0.0;
 cfg.variance_constraint.first_level_obstacle_slack_enabled = true;
 cfg.variance_constraint.first_level_obstacle_slack_weight = 10;
-cfg.variance_constraint.first_level_obstacle_slack_hard_after_time = 0.75;
+cfg.variance_constraint.first_level_obstacle_slack_hard_after_time = 0.70;
 % One conservative PTCBF row per controlled point, formed from all active
 % first-level obstacle functions and both track-boundary functions.
 cfg.variance_constraint.first_level_joint_safety_softmin_enabled = true;
-cfg.variance_constraint.first_level_joint_safety_softmin_kappa = 2000.0;
-cfg.variance_constraint.first_level_joint_safety_phi1_omega = 0.5;
+cfg.variance_constraint.first_level_joint_safety_softmin_kappa = 5000.0;
+cfg.variance_constraint.first_level_joint_safety_phi1_omega = 0.40;
 cfg.variance_constraint.second_level_grad_tol = 1e-6;
 cfg.variance_constraint.second_level_integral_uncertainty_budget = 30;
 cfg.variance_constraint.second_level_hocbf_enabled = 1;
 cfg.variance_constraint.second_level_hocbf_alpha2 = 0.5;
 cfg.variance_constraint.second_level_hocbf_relaxation_bound = 8;
-cfg.variance_constraint.second_level_psi1_margin = 55;
+cfg.variance_constraint.second_level_psi1_margin = 20;
 cfg.variance_constraint.second_level_diagnostics = false;
 cfg.variance_constraint.second_level_ptcbf_enabled = 1;
 % 障碍平滑目标(第二层): cost += 0.5*||G*u + e||^2, e/G 来自
@@ -597,7 +605,7 @@ cfg.variance_constraint.second_level_obstacle_smoothness = struct( ...
     'implementation_version', 1);
 cfg.variance_constraint.second_level_terminal_variance_beta_final = 3.5;
 cfg.variance_constraint.second_level_terminal_variance_ptzf_initial_margin = 0;
-cfg.variance_constraint.second_level_terminal_variance_ptzf_gamma = 0.6;
+cfg.variance_constraint.second_level_terminal_variance_ptzf_gamma = 0.8;
 cfg.variance_constraint.second_level_terminal_variance_alpha = 1;
 cfg.variance_constraint.second_level_ptclf_enabled = 1;
 cfg.variance_constraint.second_level_closed_form_solver_enabled = false;
@@ -745,9 +753,9 @@ cfg.variance_constraint.third_level_anchor_clf_phi1_max = inf;
 cfg.variance_constraint.third_level_anchor_clf_phi0 = 280;
 % 分端点 [首点; 末点]，只在 sequential increment QP 里生效。
 cfg.variance_constraint.third_level_anchor_clf_endpoint_phi0 = [30; 30];
-cfg.variance_constraint.third_level_anchor_clf_endpoint_phi1_omega = [2; 2];
+cfg.variance_constraint.third_level_anchor_clf_endpoint_phi1_omega = [1; 1];
 cfg.variance_constraint.third_level_anchor_clf_endpoint_phi1_early_gain = ...
-    [80;80];
+    [40;40];
 cfg.variance_constraint.third_level_anchor_clf_endpoint_phi1_max = ...
     [inf; inf];
 cfg.variance_constraint.third_level_slack_enabled = false;

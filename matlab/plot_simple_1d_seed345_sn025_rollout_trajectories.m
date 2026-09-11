@@ -1,6 +1,6 @@
 function paths = plot_simple_1d_seed345_sn025_rollout_trajectories()
 root=fileparts(mfilename('fullpath'));
-out=fullfile(root,'outputs','1d case全局GP训练阈值实验_50x40_seed345_sn025');
+out=fullfile(root,'outputs','1d case全局GP');
 A=load(fullfile(out,'Simple1D_GlobalGP_Threshold_Sweep.mat'),'sweep');
 S=A.sweep;n=numel(S.runs);
 labels=[arrayfun(@(z)sprintf('threshold %.2f',z),S.thresholds, ...

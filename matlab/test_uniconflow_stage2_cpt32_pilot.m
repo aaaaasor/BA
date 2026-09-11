@@ -1,0 +1,53 @@
+function report=test_uniconflow_stage2_cpt32_pilot(out_dir,n_test,max_seconds,workers)
+%TEST_UNICONFLOW_STAGE2_CPT32_PILOT Bounded strict-CEM feasibility pilot.
+if nargin<1||isempty(out_dir),out_dir='C:\Users\JieJi\BA\matlab\outputs\赛道UniConFlow';end
+if nargin<2,n_test=6;end
+if nargin<3,max_seconds=120;end
+if nargin<4,workers=6;end
+L=load(fullfile(out_dir,'UniConFlow_Stage1_Projected_100_Full.mat'),'out','seeds');
+Sraw=L.out.states_before_projection;Araw=L.out.actions;
+Traw=L.out.trajectory_before_projection;Zraw=L.out.z_path(:,:,end);
+z0=L.out.z0;spec=L.out.spec;stage1_options=L.out.options;stage1_mode=L.out.mode;
+seeds=L.seeds(:);clear L;
+scene=uniconflow_paper_project_scene(struct('aggregate',false));
+pilot_dir=fullfile(out_dir,'stage2_pilot_cpt3p2');if ~exist(pilot_dir,'dir'),mkdir(pilot_dir);end
+workers=min([workers,n_test,6]);p=gcp('nocreate');
+if isempty(p)||p.NumWorkers~=workers,if ~isempty(p),delete(p);end,parpool('Processes',workers);end
+rows=cell(n_test,1);dq=parallel.pool.DataQueue;afterEach(dq,@show_row);
+state_constraint=scene.state_constraint;state_constraint_batch=scene.state_constraint_batch;
+state_constraint_rows_batch=scene.state_constraint_rows_batch;
+parfor q=1:n_test
+    stage1=struct('mode',stage1_mode,'states',Sraw(:,:,q), ...
+        'actions',Araw(:,:,q),'trajectory',Traw(:,q), ...
+        'normalized_state',Zraw(:,q),'z0',z0(:,q), ...
+        'spec',spec,'trajectory_seeds',seeds(q),'options',stage1_options);
+    opts=struct('cem_population',512,'cem_elite',32,'cem_iterations',20, ...
+        'n_pad',10,'n_rec',20,'cem_sigma',[0.15;2], ...
+        'lambda_state',1e5,'seed',double(seeds(q))+6201, ...
+        'paper_strict',true,'max_seconds_per_trajectory',max_seconds, ...
+        'violation_tol',5e-4,'state_constraint',state_constraint, ...
+        'state_constraint_batch',state_constraint_batch, ...
+        'state_constraint_rows_batch',state_constraint_rows_batch);
+    clock=tic;o=uniconflow_paper_cem_refine(stage1,opts);elapsed=toc(clock);
+    rows{q}=struct('index',q,'seed',seeds(q),'certified',all(o.certified), ...
+        'guided_bad',o.guided_state_violations_before, ...
+        'rollout_bad_before',o.state_violations_before, ...
+        'bad_after',o.state_violations_after,'passes',o.cem_passes, ...
+        'windows',o.windows_processed,'seconds',elapsed);
+    cache=struct('stage1',stage1,'out',o,'options',opts,'row',rows{q});
+    save_pilot(fullfile(pilot_dir,sprintf('pilot_%03d_seed_%010u.mat', ...
+        q,uint32(seeds(q)))),cache);
+    send(dq,[q,rows{q}.certified,rows{q}.rollout_bad_before, ...
+        rows{q}.bad_after,rows{q}.passes,elapsed]);
+end
+report=struct2table(vertcat(rows{:}));
+writetable(report,fullfile(pilot_dir,'Stage2_Pilot_Report.csv'));
+save(fullfile(pilot_dir,'Stage2_Pilot_Report.mat'),'report','-v7.3');disp(report);
+end
+function save_pilot(file,cache)
+save(file,'cache','-v7.3');
+end
+function show_row(x)
+fprintf('q=%d certified=%d rollout_bad=%d -> %d passes=%d sec=%.1f\n', ...
+    x(1),x(2),x(3),x(4),x(5),x(6));
+end

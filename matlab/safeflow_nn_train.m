@@ -1,4 +1,4 @@
-function out = safeflow_nn_train(n_steps, do_plot)
+function out = safeflow_nn_train(n_steps, do_plot, opts)
 %SAFEFLOW_NN_TRAIN SafeFlow 基线的流匹配 MLP：261 -> 256^3 -> 260
 %
 %   out = safeflow_nn_train(5000, true)     % 小跑一次
@@ -11,12 +11,18 @@ function out = safeflow_nn_train(n_steps, do_plot)
 
 if nargin < 1 || isempty(n_steps), n_steps = 5000; end
 if nargin < 2, do_plot = true; end
+if nargin < 3, opts = struct(); end
+gf = @(f,d) struct_field_default(opts,f,d);
 this_dir = fileparts(mfilename('fullpath'));
 
 %% ---------- 数据 ----------
 cfg = get_config();
 rng(cfg.random_seed);
-[pts, segment] = scenario_training_points(cfg, 65, cfg.n_train);   % (65, N, 4)
+% opts.n_train overrides cfg.n_train so a training-set-size sweep does not
+% need a different get_config.  Subsets are nested (the racing branch takes
+% trajectories 1:N), so a larger N is a strict superset of a smaller one.
+n_train = gf('n_train', cfg.n_train);
+[pts, segment] = scenario_training_points(cfg, 65, n_train);   % (65, N, 4)
 features = pts(:, :, 1:4);
 % layout='dedup' : 65 点 x 4 特征 = 260 维（重建后的去重轨迹）
 % layout='segment': 16 段 x 5 点 x 4 特征 = 320 维（第三层实际的分段布局，
@@ -52,15 +58,17 @@ X1n  = (X1 - mu_d) ./ sd_d;                 % 标准化，和 GP 流程口径一
 fprintf('数据: %d 条轨迹 x %d 维\n', N, D);
 
 %% ---------- 网络 ----------
-H = 256;  Din = D + 1;  Dout = D;
-weight_init_seed = struct_field_default(cfg, 'safeflow_nn_init_seed', 20260101);
+H = gf('hidden_width',256);  Din = D + 1;  Dout = D;
+weight_init_seed = gf('weight_init_seed', ...
+    struct_field_default(cfg, 'safeflow_nn_init_seed', 20260101));
 rng(weight_init_seed);
 P = { randn(H,Din)*sqrt(2/Din), randn(H,H)*sqrt(2/H), ...
       randn(H,H)*sqrt(2/H),     randn(Dout,H)*sqrt(2/H), ...
       zeros(H,1), zeros(H,1), zeros(H,1), zeros(Dout,1) };
 m = cellfun(@(p) zeros(size(p)), P, 'UniformOutput', false);
 v = m;
-lr = 1e-3; be1 = 0.9; be2 = 0.999; epA = 1e-8; B = 256;
+lr = gf('learning_rate',1e-3); be1 = 0.9; be2 = 0.999; epA = 1e-8;
+B = min(gf('batch_size',256),N);
 fprintf('网络: %d -> %d^3 -> %d,  参数 %d\n', Din, H, Dout, ...
     sum(cellfun(@numel, P)));
 
@@ -121,6 +129,9 @@ out = struct('P', {P}, 'mu_d', mu_d, 'sd_d', sd_d, 'loss', loss_hist, ...
     'layout', layout, 'seg_index', seg_index, ...
     'weight_init_seed', weight_init_seed, ...
     'data_seed', cfg.random_seed, 'n_train_steps', n_steps, ...
+    'training_options', struct('hidden_width',H,'batch_size',B, ...
+        'learning_rate',lr,'weight_init_seed',weight_init_seed, ...
+        'n_train',n_train), ...
     'smoke_rollout_seed', cfg.first_level_rollout_seed, ...
     'segment_points_per_segment', cfg.segment_points_per_segment, ...
     'n_features_per_point', nF, ...

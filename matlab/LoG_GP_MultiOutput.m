@@ -48,6 +48,11 @@ classdef LoG_GP_MultiOutput < handle
 		AggregationMethod = 'MOE';
 		DataSaturation = false;
 	end
+	properties (Access = public, Transient)
+		% Set only on an inference copy. Age bookkeeping is used by online
+		% model maintenance, but cannot affect a read-only rollout prediction.
+		PredictionOnly = false;
+	end
 	methods
 		function obj = LoG_GP_MultiOutput( ...
 				Max_LocalGP_DataQuantity,Max_LocalGP_Quantity, ...
@@ -369,7 +374,10 @@ classdef LoG_GP_MultiOutput < handle
 			cutD = obj.HyperplaneDimension(model);
 			xD = x(cutD); %x value in cut dimension
 			o = obj.HyperplaneOverlap(model); %half of the overlapping region
-			gradL = zeros(1, obj.x_dim);
+			need_gradient = nargout > 2;
+			if need_gradient
+				gradL = zeros(1, obj.x_dim);
+			end
 			if ~(isfinite(o) && o > 0)
 				% Degenerate split: retain hard routing and a zero derivative.
 				pL = double(xD < mP);
@@ -381,14 +389,16 @@ classdef LoG_GP_MultiOutput < handle
 					pL = 0;
 				elseif(pL >= 1 - 1e-12)
 					pL = 1;
-				else
+				elseif need_gradient
 					gradL(cutD) = -1 / o;
 				end
 			else
 				pL = 0;
 			end
 			pR = 1 - pL;
-			gradR = -gradL;
+			if need_gradient
+				gradR = -gradL;
+			end
 		end
 		%% prediction
 		function [mu,var,likelyhood,eta,eta_max,Na, ...
@@ -490,10 +500,9 @@ classdef LoG_GP_MultiOutput < handle
 			mCount = 1;
 			moP(1,1) = obj.RootModel;
 			moP(1,2) = 1;
-			while ~isequal(obj.children(moP(1:mCount,1),:), ...
-					-1 * ones(mCount,2))
+			while any(obj.children(moP(1:mCount,1),:) ~= -1, 'all')
 				for j = 1:mCount
-					if ~isequal(obj.children(moP(j,1),:), -1 * ones(1,2))
+					if any(obj.children(moP(j,1),:) ~= -1)
 						[pL, pR] = obj.activation(x,moP(j,1));
 						if pL > 0 && pR == 0
 							moP(j,1) = obj.children(moP(j,1),1);
@@ -512,7 +521,9 @@ classdef LoG_GP_MultiOutput < handle
 				end
 			end
 
-			obj.AgeOfLocalGP = obj.AgeOfLocalGP + 1;
+			if ~obj.PredictionOnly
+				obj.AgeOfLocalGP = obj.AgeOfLocalGP + 1;
+			end
 			p_set = moP(1:mCount,2);
 			mu_set = zeros(obj.y_dim,mCount);
 			var_set = zeros(1,mCount);
@@ -523,7 +534,9 @@ classdef LoG_GP_MultiOutput < handle
 					obj.LocalGP_set{LocalGPNr}.predict_mean_variance(x);
 				mu_set(:,i) = mu_m;
 				var_set(i) = max(var_m,eps);
-				obj.AgeOfLocalGP(obj.Node_GP_Map == NodeNr) = 0;
+				if ~obj.PredictionOnly
+					obj.AgeOfLocalGP(obj.Node_GP_Map == NodeNr) = 0;
+				end
 			end
 			switch obj.AggregationMethod
 				case 'GPOE'
@@ -566,7 +579,9 @@ classdef LoG_GP_MultiOutput < handle
 				end
 			end
 
-			obj.AgeOfLocalGP = obj.AgeOfLocalGP + 1;
+			if ~obj.PredictionOnly
+				obj.AgeOfLocalGP = obj.AgeOfLocalGP + 1;
+			end
 			var = zeros(obj.y_dim,1);
 			mu = zeros(obj.y_dim,1);
 			for i=1:mCount
@@ -582,7 +597,9 @@ classdef LoG_GP_MultiOutput < handle
 						var_m = local_gp.predict_variance(x);
 						var = var + moP(i,2) ./ var_m;
 				end
-				obj.AgeOfLocalGP(obj.Node_GP_Map == NodeNr) = 0;
+				if ~obj.PredictionOnly
+					obj.AgeOfLocalGP(obj.Node_GP_Map == NodeNr) = 0;
+				end
 			end
 			switch obj.AggregationMethod
 				case 'MOE'
@@ -606,9 +623,9 @@ classdef LoG_GP_MultiOutput < handle
 			mCount = 1;
 			moP(1,1) = obj.RootModel;
 			moP(1,2) = 1;
-			while ~isequal(obj.children(moP(1:mCount,1),:), -1 * ones(mCount,2))
+			while any(obj.children(moP(1:mCount,1),:) ~= -1, 'all')
 				for j = 1:mCount
-					if ~isequal(obj.children(moP(j,1),:), -1 * ones(1,2))
+					if any(obj.children(moP(j,1),:) ~= -1)
 						[pL, pR, gradL, gradR] = ...
 							obj.activation(x, moP(j,1));
 						parent_weight = moP(j,2);

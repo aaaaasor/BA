@@ -1,4 +1,4 @@
-function archive_safeflow_nn_run(R, net, cfg, n_train_steps, n_gen)
+function archive_safeflow_nn_run(R, net, cfg, n_train_steps, n_gen, only_keys, custom_specs)
 %ARCHIVE_SAFEFLOW_NN_RUN 把 FM / SafeFlow 两次运行归档成可复现的目录。
 %
 % 目录结构参照 outputs/赛车baseline：
@@ -24,13 +24,35 @@ if nargin == 0
     R = S.R;  net = S.net;  cfg = S.cfg;
     n_train_steps = S.n_train_steps;  n_gen = S.n_gen;
 end
-specs = { 'fm',       '赛车fm',       'Racing_FM_NN'
-          'safeflow', '赛车safeflow', 'Racing_SafeFlow_NN' };
+specs = { 'fm',       '赛车fm',       'Racing_FM_NN',       'FM (NN)',       ''
+          'safeflow', '赛车safeflow', 'Racing_SafeFlow_NN', 'SafeFlow (NN)', '' };
+% custom_specs replaces that table so runs other than the two headline ones can
+% be archived in the same reproducible form.  Columns: field name in R, output
+% directory, file prefix, display name for the figures.
+if nargin >= 7 && ~isempty(custom_specs)
+    assert(any(size(custom_specs,2) == [4 5]), ['custom_specs needs 4 or 5 ' ...
+        'columns: key, folder, prefix, display name, and optionally a call ' ...
+        'template for the reproduce script']);
+    if size(custom_specs,2) == 4
+        custom_specs(:,5) = {''};      % '' = the default safeflow_nn_rollout call
+    end
+    specs = custom_specs;
+end
+% only_keys restricts which of those rows are rebuilt.  Each row is rebuilt by
+% deleting its directory first, so archiving one run must not touch the other.
+if nargin >= 6 && ~isempty(only_keys)
+    if ischar(only_keys) || isstring(only_keys), only_keys = cellstr(only_keys); end
+    keep = ismember(specs(:,1), only_keys);
+    assert(any(keep), 'only_keys matched none of: %s', strjoin(specs(:,1)', ', '));
+    specs = specs(keep, :);
+end
 
 git_txt = capture_git_state(fileparts(this_dir));
 
 for si = 1:size(specs,1)
     key = specs{si,1};  folder = specs{si,2};  prefix = specs{si,3};
+    disp_name = specs{si,4};
+    call_tpl  = specs{si,5};
     d = fullfile(out_root, folder);
     if exist(d, 'dir'), rmdir(d, 's'); end
     mkdir(d);  mkdir(fullfile(d, 'source_snapshot'));
@@ -66,16 +88,16 @@ for si = 1:size(specs,1)
     snapshot_sources(this_dir, fullfile(d, 'source_snapshot'));
 
     % ---- 图 ----
-    make_figures(d, prefix, key, r, m, T, net);
+    make_figures(d, prefix, key, r, m, T, net, disp_name);
 
     % ---- 元数据 ----
     fid = fopen(fullfile(d, 'GIT_STATE.txt'), 'w');
     fwrite(fid, git_txt);  fclose(fid);
     write_reproduce_md(fullfile(d, 'REPRODUCE.md'), key, prefix, r, m, ...
-        net, n_train_steps, n_gen);
+        net, n_train_steps, n_gen, call_tpl);
     write_environment(fullfile(d, 'MATLAB_ENVIRONMENT.txt'));
     write_run_reproduce(fullfile(d, 'run_reproduce.m'), key, prefix, ...
-        n_train_steps, n_gen);
+        n_train_steps, n_gen, r, call_tpl, net);
 
     % ---- 校验和 ----
     write_sha256(d);
@@ -84,9 +106,9 @@ end
 end
 
 % =====================================================================
-function make_figures(d, prefix, key, r, m, T, net)
+function make_figures(d, prefix, key, r, m, T, net, disp_name)
 % All figure text is English on purpose: these go straight into the thesis.
-if strcmp(key,'fm'), name = 'FM (NN)'; else, name = 'SafeFlow (NN)'; end
+name = disp_name;
 
 nP = net.n_points;  nF = net.n_features_per_point;
 target_xy = permute(reshape(net.X1, nF, nP, []), [2 3 1]);   % (nP, N, nF)
@@ -142,7 +164,10 @@ for i = 1:r.n_gen
             'LineWidth', 1.1, 'HandleVisibility', 'off');
     end
 end
-grid on; axis equal; xlim(xl); ylim(yl); legend('Location','best');
+% Diverged SafeFlow trajectories run diagonally through the lower-right of
+% this panel, where MATLAB's automatic placement tends to put the legend.
+% Keep the label in the empty upper-right corner so it never covers the data.
+grid on; axis equal; xlim(xl); ylim(yl); legend('Location','northeast');
 xlabel('x'); ylabel('y');
 title(sprintf('%s Rollout (%d curves, Safety %.2f%%)', ...
     name, r.n_gen, 100*m.safety));
@@ -176,11 +201,21 @@ if ~isempty(r.u_trace)
     xlabel('Generation time t'); ylabel('|u|');
     title('QP Correction Magnitude (state space)');
     subplot(1,2,2);
-    sl = double(r.u_trace_slack);
-    plot(r.u_trace_t, 100*mean(reshape(sl, size(sl,1), []), 2), 'LineWidth', 1.5);
-    grid on; xlabel('Generation time t'); ylabel('Slack activation rate (%)');
-    title(sprintf('Overall slack activation %.1f%%', ...
-        100*r.slack_active/max(r.n_qp,1)));
+    % Methods without a slack variable (PCFM) leave this trace empty; report the
+    % scalar rate instead of drawing an empty curve.
+    if isempty(r.u_trace_slack)
+        axis off;
+        text(0.5, 0.5, sprintf(['no per-step slack trace\n' ...
+            'overall infeasible/slack rate %.3f%%'], ...
+            100*r.slack_active/max(r.n_qp,1)), 'Units','normalized', ...
+            'HorizontalAlignment','center');
+    else
+        sl = double(r.u_trace_slack);
+        plot(r.u_trace_t, 100*mean(reshape(sl, size(sl,1), []), 2), 'LineWidth', 1.5);
+        grid on; xlabel('Generation time t'); ylabel('Slack activation rate (%)');
+        title(sprintf('Overall slack activation %.1f%%', ...
+            100*r.slack_active/max(r.n_qp,1)));
+    end
     save_fig(f, fullfile(d, [prefix '_u_norm.emf']));
 end
 end
@@ -234,6 +269,9 @@ function snapshot_sources(src_dir, dst_dir)
 entries = { 'safeflow_nn_train.m', 'safeflow_nn_rollout.m', ...
             'safeflow_nn_demo.m', 'safeflow_nn_kl.m', ...
             'safeflow_nn_ablate_terminal.m', 'archive_safeflow_nn_run.m', ...
+            'pcfm_nn_rollout.m', 'uniconflow_nn_rollout.m', ...
+            'fm_mppi_nn_rollout.m', 'archive_pcfm_run.m', ...
+            'archive_safediffuser_variants.m', 'archive_fm_mppi_run.m', ...
             'verify_qp2d.m', 'build_track_dataset.m' };
 missing = {};
 entry_paths = {};
@@ -316,7 +354,19 @@ catch
 end
 end
 
-function write_run_reproduce(path, key, prefix, n_steps, n_gen)
+function write_run_reproduce(path, key, prefix, n_steps, n_gen, r, call_tpl, net)
+if nargin < 7, call_tpl = ''; end
+if nargin < 8, net = []; end
+% The mode actually passed to the rollout is recorded on the result and is not
+% always the spec key: the SafeDiffuser variants all run mode 'safeflow' with
+% their own option sets.  safeflow_nn_rollout enables guidance only for
+% 'safeflow', so emitting the key as a mode yields a reproduce script that
+% silently regenerates plain FM instead of the archived run.
+mode_str = key;
+if isfield(r, 'mode') && ~isempty(r.mode), mode_str = char(r.mode); end
+% call_tpl: a printf template taking (n_gen, opts-or-empty) that names the
+% rollout to call.  Empty keeps the safeflow_nn_rollout(net, mode, n, opts)
+% form; PCFM has no mode argument, so it supplies its own.
 L = {};
 L{end+1} = 'function run_reproduce(retrain)';
 L{end+1} = sprintf('%%RUN_REPRODUCE 从本归档目录独立重跑 %s。', prefix);
@@ -331,7 +381,13 @@ L{end+1} = 'addpath(snap);  old = cd(snap);  restore = onCleanup(@() cd(old));';
 L{end+1} = '';
 L{end+1} = '%% 1) 复用归档网络重跑 rollout（快，秒级）';
 L{end+1} = sprintf('S = load(fullfile(here, ''%s_Net.mat''));', prefix);
-L{end+1} = sprintf('r = safeflow_nn_rollout(S.net, ''%s'', %d);', key, n_gen);
+opt_txt = options_literal(r, '');
+if isempty(opt_txt)
+    L{end+1} = sprintf(call_of(call_tpl, mode_str, false), n_gen);
+else
+    L{end+1} = sprintf('opts = %s;', opt_txt);
+    L{end+1} = sprintf(call_of(call_tpl, mode_str, true), n_gen);
+end
 L{end+1} = sprintf('A = load(fullfile(here, ''%s_Rollout.mat''));', prefix);
 L{end+1} = 'd = max(abs(r.points(:) - A.rollout.points(:)));';
 L{end+1} = 'fprintf(''复用网络重跑: 轨迹最大偏差 %.3e\n'', d);';
@@ -339,14 +395,30 @@ L{end+1} = '';
 L{end+1} = '%% 2) 单条重放（用该条自己的 seed）';
 L{end+1} = sprintf('T = readtable(fullfile(here, ''%s_Trajectory_Seeds.csv''));', prefix);
 L{end+1} = 'i = 1;';
-L{end+1} = sprintf(['r1 = safeflow_nn_rollout(S.net, ''%s'', 1, ...\n' ...
-    '    struct(''trajectory_seeds'', T.seed(i)));'], key);
+if isempty(opt_txt)
+    L{end+1} = sprintf(['r1 = safeflow_nn_rollout(S.net, ''%s'', 1, ...\n' ...
+        '    struct(''trajectory_seeds'', T.seed(i)));'], mode_str);
+else
+    L{end+1} = 'o1 = opts;  o1.trajectory_seeds = T.seed(i);';
+    if isempty(call_tpl)
+        L{end+1} = sprintf('r1 = safeflow_nn_rollout(S.net, ''%s'', 1, o1);', mode_str);
+    else
+        one_tpl = strrep(call_tpl, 'r = ', 'r1 = ');
+        one_tpl = strrep(one_tpl, 'opts', 'o1');
+        L{end+1} = sprintf(one_tpl, 1);
+    end
+end
 L{end+1} = 'd1 = max(abs(r1.points(:) - reshape(A.rollout.points(:,i,:), [], 1)));';
 L{end+1} = 'fprintf(''第 %d 条单独重放: 最大偏差 %.3e\n'', i, d1);';
 L{end+1} = '';
 L{end+1} = '%% 3) 从零重训并比对权重（可选，约 2 分钟）';
 L{end+1} = 'if nargin >= 1 && retrain';
-L{end+1} = sprintf('    net2 = safeflow_nn_train(%d, false);', n_steps);
+% The width and training-set size must travel with the archive: a bare
+% safeflow_nn_train(n_steps, false) call retrains at the function defaults,
+% which silently produces a different network whenever this run used any
+% non-default option.
+L{end+1} = sprintf('    net2 = safeflow_nn_train(%d, false, %s);', n_steps, ...
+    struct_literal(train_options_of(net)));
 L{end+1} = '    dw = 0;';
 L{end+1} = '    for j = 1:numel(S.net.P)';
 L{end+1} = '        dw = max(dw, max(abs(net2.P{j}(:) - S.net.P{j}(:))));';
@@ -377,7 +449,11 @@ end
 txt = strjoin(lines, newline);
 end
 
-function write_reproduce_md(path, key, prefix, r, m, net, n_steps, n_gen)
+function write_reproduce_md(path, key, prefix, r, m, net, n_steps, n_gen, call_tpl)
+if nargin < 9, call_tpl = ''; end
+% Same as in write_run_reproduce: the recorded mode, not the spec key.
+mode_str = key;
+if isfield(r, 'mode') && ~isempty(r.mode), mode_str = char(r.mode); end
 L = {};
 L{end+1} = sprintf('# %s — 复现说明', prefix);
 L{end+1} = '';
@@ -409,18 +485,37 @@ L{end+1} = '';
 L{end+1} = '## 复现步骤';
 L{end+1} = '';
 L{end+1} = '```matlab';
-L{end+1} = '% 1) 全部重跑（网络 + 两个 rollout + 归档）';
-L{end+1} = sprintf('safeflow_nn_demo(%d, %d);', n_steps, n_gen);
+L{end+1} = '% 1) 权威入口: 本目录的 run_reproduce.m。它带有本次运行的完整';
+L{end+1} = '%    参数, cd 到本目录直接执行即可, 不依赖 BA 工程。';
+L{end+1} = 'run_reproduce            % 复用网络重跑 + 单条重放';
+L{end+1} = 'run_reproduce(true)      % 另加从零重训并比对权重';
 L{end+1} = '';
 L{end+1} = '% 2) 只重跑本方法的 rollout（复用归档的网络）';
 L{end+1} = sprintf('S = load(''%s_Net.mat'');', prefix);
-L{end+1} = sprintf('r = safeflow_nn_rollout(S.net, ''%s'', %d);', key, n_gen);
+md_opt = options_literal(r, '');
+if isempty(md_opt)
+    L{end+1} = sprintf(call_of(call_tpl, mode_str, false), n_gen);
+else
+    L{end+1} = sprintf('opts = %s;', md_opt);
+    L{end+1} = sprintf(call_of(call_tpl, mode_str, true), n_gen);
+end
 L{end+1} = '';
 L{end+1} = '% 3) 单独重放第 i 条轨迹（用它自己的种子）';
 L{end+1} = sprintf('T = readtable(''%s_Trajectory_Seeds.csv'');', prefix);
 L{end+1} = 'i = 57;';
-L{end+1} = sprintf(['r_one = safeflow_nn_rollout(S.net, ''%s'', 1, ...\n' ...
-    '    struct(''trajectory_seeds'', T.seed(i)));'], key);
+if isempty(md_opt)
+    L{end+1} = sprintf(['r_one = safeflow_nn_rollout(S.net, ''%s'', 1, ...\n' ...
+        '    struct(''trajectory_seeds'', T.seed(i)));'], mode_str);
+else
+    L{end+1} = 'o_one = opts;  o_one.trajectory_seeds = T.seed(i);';
+    if isempty(call_tpl)
+        L{end+1} = sprintf('r_one = safeflow_nn_rollout(S.net, ''%s'', 1, o_one);', mode_str);
+    else
+        one_tpl = strrep(call_tpl, 'r = ', 'r_one = ');
+        one_tpl = strrep(one_tpl, 'opts', 'o_one');
+        L{end+1} = sprintf(one_tpl, 1);
+    end
+end
 L{end+1} = '% r_one.points 应与归档 Rollout.mat 的第 i 条逐位相同';
 L{end+1} = '```';
 L{end+1} = '';
@@ -433,10 +528,30 @@ L{end+1} = sprintf('- 网络 %d -> 256^3 -> %d, %d 参数, %d 步训练', ...
     sum(cellfun(@numel, net.P)), n_steps);
 L{end+1} = sprintf('- 积分器 固定步 RK4, %d 步, t: 0 -> %.3f', ...
     r.n_rk_steps, r.t_max);
-if strcmp(key, 'safeflow')
-    L{end+1} = sprintf(['- CFMBF 激活 t >= %.2f; phi0 = %.1f; ' ...
-        'phi1 = 1+4t^3 (t<%.1f), 1/(1-t) (t>=%.1f)'], ...
-        r.activation_time, r.phi0, r.phi1_switch_time, r.phi1_switch_time);
+if ~strcmp(key, 'fm') && isfield(r, 'options') && isfield(r.options, 'phi1_form')
+    if isfield(r,'options') && strcmp(r.options.phi1_form,'second_order')
+        ph1 = sprintf('%g/(1-t)^2', r.options.phi1_omega);
+    else
+        ph1 = '1/(T-t)';
+    end
+    L{end+1} = sprintf(['- CBF-QP 激活 t >= %.2f; phi0 = %.1f; ' ...
+        'phi1 = 1+%gt^3 (t<%.2f), %s (t>=%.2f)'], ...
+        r.activation_time, r.phi0, r.options.phi1_early_coeff, ...
+        r.phi1_switch_time, ph1, r.phi1_switch_time);
+    if ~r.options.slack_enabled
+        L{end+1} = ['- **式 30 的 slack 已移除**: QP 为硬约束 ' ...
+            'min|u|^2 s.t. a + Bu >= 0, 不可行点取最小违反解'];
+    else
+        L{end+1} = sprintf('- 式 30 slack 权重 = %g', r.options.slack_weight);
+    end
+    dev = strcmp(r.options.phi1_form,'second_order') || ...
+        r.options.phi1_switch_time == 0 || ...
+        r.options.activation_time ~= 0.5 || ~r.options.slack_enabled;
+    if dev
+        L{end+1} = ['- 注意: 本次运行**偏离 SafeFlow 论文设置**(论文为 ' ...
+            '激活 0.5, gamma 0.9, 一阶极点 1/(T-t), 带 slack)。' ...
+            '完整参数见 run_reproduce.m 的 opts。'];
+    end
     L{end+1} = sprintf('- QP %d 次, slack 激活 %d (%.1f%%)', ...
         r.n_qp, r.slack_active, 100*r.slack_active/max(r.n_qp,1));
     L{end+1} = sprintf(['- 终端安全滤波(式 32): 移动 %d 条, ' ...
@@ -487,4 +602,43 @@ fid = fopen(p, 'r');  b = fread(fid, inf, '*uint8');  fclose(fid);
 md = java.security.MessageDigest.getInstance('SHA-256');
 dg = typecast(md.digest(b), 'uint8');
 h = upper(sprintf('%02X', dg));
+end
+
+% =====================================================================
+function tpl = call_of(call_tpl, key, with_opts)
+%CALL_OF  The rollout call the archive's reproduce script should contain.
+% Empty call_tpl keeps the safeflow_nn_rollout(net, mode, n_gen[, opts]) form.
+% A method with a different signature (PCFM takes no mode) supplies its own.
+if isempty(call_tpl)
+    if with_opts
+        tpl = sprintf('r = safeflow_nn_rollout(S.net, ''%s'', %%d, opts);', key);
+    else
+        tpl = sprintf('r = safeflow_nn_rollout(S.net, ''%s'', %%d);', key);
+    end
+else
+    tpl = call_tpl;
+end
+end
+
+% =====================================================================
+function o = train_options_of(net)
+%TRAIN_OPTIONS_OF Training options recorded on a network, or empty.
+o = struct();
+if ~isempty(net) && isstruct(net) && isfield(net, 'training_options')
+    o = net.training_options;
+end
+end
+
+function s = struct_literal(o)
+%STRUCT_LITERAL Format a flat numeric option struct as MATLAB source.
+f = fieldnames(o);
+if isempty(f), s = 'struct()'; return; end
+parts = cell(1, numel(f));
+for i = 1:numel(f)
+    v = o.(f{i});
+    assert(isnumeric(v) && isscalar(v), ...
+        'struct_literal only handles scalar numeric options; got %s.', f{i});
+    parts{i} = sprintf('''%s'',%.17g', f{i}, v);
+end
+s = ['struct(' strjoin(parts, ',') ')'];
 end

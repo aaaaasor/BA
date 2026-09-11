@@ -1,12 +1,19 @@
-function result = plot_simple_1d_seed345_sn025_maps_with_rollouts()
+function result = plot_simple_1d_seed345_sn025_maps_with_rollouts(line_alpha, n_show)
+% line_alpha : opacity of the rollout lines (default 0.15).  NOTE: EMF has no
+%              alpha channel, so this only affects screen/PNG rendering; the
+%              EMF is checked separately and n_show is the EMF-safe control.
+% n_show     : how many of the 1000 trajectories to draw (default 200).  With
+%              all 1000 opaque lines the variance map underneath is invisible.
+if nargin < 1 || isempty(line_alpha), line_alpha = 0.15; end
+if nargin < 2 || isempty(n_show),     n_show = 200; end
 % Overlay each model's own 100 rollout trajectories on the four configured
 % threshold variance maps and the all-data variance map.
 
 root=fileparts(mfilename('fullpath'));
-out=fullfile(root,'outputs','1d case全局GP训练阈值实验_50x40_seed345_sn025');
+out=fullfile(root,'outputs',['1d case' char([20840 23616 71 80])]);
 D=load(fullfile(out,'Training_Data_and_Seeds.mat'),'X','x_init');
 V=load(fullfile(out,'Simple1D_GlobalGP_Variance_Maps_All_Thresholds.mat'),'result');
-V=V.result;thresholds=V.thresholds;assert(isequal(thresholds,[.20 .15 .10 .05]));
+V=V.result;thresholds=V.thresholds;assert(numel(thresholds)==4);   % thresholds now come from the sweep
 
 nm=numel(thresholds)+1;paths=cell(nm,1);times=[];
 for i=1:numel(thresholds)
@@ -36,7 +43,9 @@ for i=1:nm
         'k:','LineWidth',.3);
     scatter(ax,D.X(V.selected_indices{i},1),D.X(V.selected_indices{i},2),3,'k','filled');
     P=squeeze(paths{i}(:,:,1));
-    plot(ax,times,P,'Color',[.93 .93 .93],'LineWidth',.35);
+    keep=round(linspace(1,size(P,2),min(n_show,size(P,2))));
+    P=P(:,keep);
+    plot(ax,times,P,'Color',[1 1 1 line_alpha],'LineWidth',.35);
     scatter(ax,times(1)*ones(size(P,2),1),P(1,:)',7,[0 .65 1],'filled');
     scatter(ax,times(end)*ones(size(P,2),1),P(end,:)',9,[1 0 1],'filled');
     xlabel(ax,'Generation time t');ylabel(ax,'State x');title(ax,labels{i});

@@ -3,7 +3,7 @@ function result = plot_simple_1d_50x40_seed345_sn025_t0_t1_distributions()
 % the analytic source and target densities for the 1D exact-GP sweep.
 
 root = fileparts(mfilename('fullpath'));
-out = fullfile(root,'outputs','1d case全局GP训练阈值实验_50x40_seed345_sn025');
+out = fullfile(root,'outputs',['1d case' char([20840 23616 71 80])]);
 A = load(fullfile(out,'Simple1D_GlobalGP_Threshold_Sweep.mat'),'sweep');
 S = A.sweep;
 assert(numel(S.runs)==numel(S.thresholds)+1);
@@ -35,10 +35,15 @@ end
 % Use a single-hue sequential palette: fewer retained points are lighter,
 % and the all-data model is the darkest.  This keeps the threshold ordering
 % visually clear without the clutter of unrelated categorical colors.
-light_blue = [0.64, 0.82, 1.00];
-dark_blue = [0.02, 0.16, 0.52];
+% Sparse models are drawn faint and thin, dense ones dark and thick, so the
+% ordering reads at a glance.  A gamma below 1 pushes the intermediate steps
+% towards the light end, which separates the four thresholds more than a
+% linear ramp does -- with a linear ramp the middle two look almost identical.
+light_blue = [0.80, 0.88, 0.97];
+dark_blue  = [0.01, 0.08, 0.35];
 mix = linspace(0,1,n_models)';
-colors = (1-mix).*light_blue + mix.*dark_blue;
+shade = mix .^ 0.65;
+colors = (1-shade).*light_blue + shade.*dark_blue;
 f=figure('Visible','off','Color','w','Position',[30 60 1720 620], ...
     'Renderer','painters');
 tl=tiledlayout(f,1,2,'Padding','compact','TileSpacing','compact');
@@ -54,10 +59,12 @@ grid(ax,'on');box(ax,'on');xlim(ax,[x_grid(1) x_grid(end)]);
 
 ax=nexttile(tl); hold(ax,'on');
 plot(ax,x_grid,target_true,'k-','LineWidth',2.6);
+% Line weight follows the same ordering as the colour: the sparse, lighter
+% models are drawn thin and the dense, darker ones thick, so the eye is
+% carried towards the models that actually match the target.
+widths = 0.7 + shade*(3.2-0.7);
 for i=1:n_models
-    width = 1.7;
-    if i==n_models, width=2.4; end
-    plot(ax,x_grid,terminal_kde(:,i),'LineWidth',width,'Color',colors(i,:));
+    plot(ax,x_grid,terminal_kde(:,i),'LineWidth',widths(i),'Color',colors(i,:));
 end
 xlabel(ax,'State x');ylabel(ax,'Probability density');
 title(ax,sprintf('t = 1: generated and true target distributions (N = %d)', ...

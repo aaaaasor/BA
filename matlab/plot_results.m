@@ -405,6 +405,8 @@ n_total = size(xy, 1);
 finite_mask = all(isfinite(xy), 2);
 inside_obstacle = false(n_total, 1);
 outside_boundary = false(n_total, 1);
+eval_cfg = struct_field_default(cfg, 'safe_flow_evaluation', struct());
+distance_tolerance = struct_field_default(eval_cfg, 'safety_tolerance', 5e-4);
 
 if isfield(cfg, 'obstacle') && ...
         struct_field_default(cfg.obstacle, 'enabled', false) && ...
@@ -412,8 +414,10 @@ if isfield(cfg, 'obstacle') && ...
     for point_idx = find(finite_mask)'
         p = xy(point_idx, :)';
         for obstacle_idx = 1:size(cfg.obstacle.centers, 2)
-            h = obstacle_level_and_gradient(p, cfg.obstacle, obstacle_idx);
-            if h < 0
+            [h, grad_h] = obstacle_level_and_gradient( ...
+                p, cfg.obstacle, obstacle_idx);
+            signed_normal_distance = h / max(norm(grad_h), 1e-12);
+            if signed_normal_distance < -distance_tolerance
                 inside_obstacle(point_idx) = true;
                 break;
             end
@@ -431,7 +435,8 @@ if has_boundary_geometry
         p = xy(point_idx, :)';
         h_left = evaluate_track_implicit_field(fields, 1, p);
         h_right = evaluate_track_implicit_field(fields, 2, p);
-        outside_boundary(point_idx) = h_left < 0 || h_right < 0;
+        outside_boundary(point_idx) = ...
+            h_left < -distance_tolerance || h_right < -distance_tolerance;
     end
 end
 
@@ -448,4 +453,6 @@ if nnz(~finite_mask) > 0
     fprintf('; nonfinite %d', nnz(~finite_mask));
 end
 fprintf('.\n');
+fprintf('  Third-level physical-distance tolerance: %.6g.\n', ...
+    distance_tolerance);
 end

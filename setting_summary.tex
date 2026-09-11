@@ -1,0 +1,680 @@
+\documentclass[11pt,a4paper]{ctexart}
+
+\usepackage{geometry}
+\geometry{left=2.4cm,right=2.4cm,top=2.6cm,bottom=2.6cm}
+
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usepackage{caption}
+\usepackage[colorlinks=true,linkcolor=black,urlcolor=blue]{hyperref}
+
+\definecolor{hardc}{HTML}{6B4FA3}
+\definecolor{softc}{HTML}{3F7D58}
+\definecolor{offc}{HTML}{C3CBD3}
+\definecolor{snapc}{HTML}{B57810}
+\definecolor{notec}{HTML}{4A5560}
+
+\captionsetup{font=small,labelfont=bf}
+\newcolumntype{C}{>{\centering\arraybackslash}X}
+\newcolumntype{R}{>{\raggedright\arraybackslash}X}
+
+% 代码/配置字段
+\newcommand{\cf}[1]{\texttt{\small #1}}
+
+\title{\textbf{三层 LoG-GP 流匹配轨迹生成器\\方法与参数设定说明}}
+\author{}
+\date{\today}
+
+\begin{document}
+
+
+
+
+
+% =====================================================================
+\section{方法概述}
+
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}p{2.4cm}p{3.5cm}Rp{3.2cm}@{}}
+\toprule
+\textbf{层} & \textbf{产出} & \textbf{说明} & \textbf{维度} \\
+\midrule
+第一层\newline & 5 点曲线 &
+从高斯噪声直接采样整条 5 点骨架，每点携带 $[x,\,y,\,\mathrm{d}x/\mathrm{d}s,\,\mathrm{d}y/\mathrm{d}s]$ &
+$5\times4=20$ 维\newline 100 步 RK4 \\
+\addlinespace
+第二层\newline  & 4 段 $\rightarrow$ 17 点 &
+每对相邻骨架点扩展为一个 5 点段，段端点由 PTCLF 拉向第一层生成点 &
+4 段 $\times$ 20 维\newline 100 步 RK4 \\
+\addlinespace
+第三层\newline  & 16 段 $\rightarrow$ 65 点 &
+第二层的 17 个点形成 16 个相邻点对，每个点对生成一个五点增量段；端点被 snap 到第二层锚点 &
+16 段 $\times$ 20 维\newline 100 步 RK4 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+% =====================================================================
+\section{数据与几何}
+
+\subsection{数据集}
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}p{5.2cm}p{1.8cm}R@{}}
+\toprule
+\textbf{参数} & \textbf{取值} & \textbf{说明} \\
+\midrule
+\cf{scenario} & racing & Nürburgring GP-Strecke，弧长 $s\in[250,1150]$\,m，重采样为 65 点 \\
+\cf{n\_train} & 30 & 训练轨迹条数 \\
+\cf{n\_time\_slices} & 15 & 第一、二层的流匹配训练时间切片 \\
+\cf{third\_level\_n\_time\_slices} & 100 & 第三层训练网格与其 rollout 分辨率一致 \\
+\cf{first\_level\_generation\_samples} & 100 & 交付轨迹条数；第二、三层各产生 1 个子样本 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{障碍}
+三个障碍均为旋转超椭圆，尺寸按局部走廊半宽缩放。水平集按指数分段定义，记 $q=R^{\!\top}(p-c)$：
+\[
+h(p)=
+\begin{cases}
+\displaystyle\sum_{d=1}^{2}\Bigl|\frac{q_d}{r_d}\Bigr|^{n}-1, & 1<n\le 2,\\[2ex]
+\displaystyle\Bigl(\sum_{d=1}^{2}\Bigl|\frac{q_d}{r_d}\Bigr|^{n}\Bigr)^{1/n}-1, & n>2.
+\end{cases}
+\]
+因此指数 1.2 的菱形与指数 2 的椭圆使用 power-sum 形式，只有指数 4 的超椭圆使用 $p$-范数形式。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lccc l@{}}
+\toprule
+\textbf{形状} & \textbf{exponent} & \textbf{track\_fraction} & \textbf{inflation} & \textbf{尺寸} \\
+\midrule
+菱形 & 1.2 & 0.72 & 0.010 & half\_size\_ratio 2.1，length\_ratio 1.5，角度 0 \\
+椭圆 & 2 & 0.52 & 0.006 & 半长轴 4.5$\times$、半短轴 1.8$\times$ 走廊半宽 \\
+超椭圆 & 4 & 0.214 & 0.005 & 半长轴 1.085$\times$、半短轴 0.328$\times$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{赛道边界}
+使用两条预构造的全局隐式有符号距离场，运行时直接求值，不做中心线最近点或局部截面搜索：
+\[
+h_k(p)=h_{k,\mathrm{raw}}(p)-m,\qquad k\in\{\text{left},\text{right}\}.
+\]
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}p{4.0cm}p{3.2cm}R@{}}
+\toprule
+\textbf{参数} & \textbf{取值} & \textbf{说明} \\
+\midrule
+\cf{constraint\_method} & global\_implicit\_fields & 两条隐式场由左右轨道线一次性构建 \\
+\cf{spline\_type} & spline (C$^2$) & CBF 梯度链式项需要 $c''$，pchip 只有 C$^1$，其 $c''$ 在结点处跳变 \\
+\cf{n\_spline\_points} & 400 & \\
+\cf{margin} $m$ & 0.003 & 等于走廊两侧各收窄；第三层覆盖为 0.001 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+% =====================================================================
+\section{三层共用设定}
+
+\subsection{GP 模型}
+每层独立拟合一个 LoG-GP（局部增长 GP 树），核为单一非平稳平方指数核，聚合方式为 \textbf{GPOE}。相邻叶子重叠宽度为 $\text{o\_ratio}\times(\text{数据范围})$。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lc@{}}
+\toprule
+\textbf{参数} & \textbf{取值} \\
+\midrule
+\cf{o\_ratio} & 0.05 \\
+\cf{max\_local\_data\_quantity} & 200 \\
+\cf{aggregation\_method} & GPOE \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{QP 问题}
+每个 RK4 子步都把当前活跃的约束装配成一个关于流场修正量 $u$ 的加权最小范数 QP。实际施加的速度为 $\mu+u$，其中 $\mu$ 是流场的 GP 后验均值。共有两类问题，具体求解哪一类取决于当前是否存在带 slack 的行。
+
+\paragraph{问题 A：带逐行 slack 的软 QP}
+只要存在至少一个软行就走这条路径。
+\begin{align*}
+\min_{u,\,\delta}\quad & \tfrac12\lVert W u\rVert^2+\tfrac12\sum_{i\in S} w_i\,\delta_i^{2}\\
+\text{s.t.}\quad
+& A_i u \le b_i+\delta_i, && i\in S \quad\text{（软行）}\\
+& A_i u \le b_i, && i\notin S \quad\text{（硬行）}\\
+& A_{\mathrm{eq}}\,u = -A_{\mathrm{eq}}\,\mu && \text{（端点 hold，仅覆盖窗口）}\\
+& \delta \ge 0
+\end{align*}
+
+\noindent 求解前所有行按 $\lVert A_i\rVert$ 归一化。若不归一化，第三层 CLF 行的系数含极小的增量标准差，\cf{quadprog} 会把可行的硬约束误判为不可行。slack 权重在原始约束单位中定义，再按 $\lVert A_i\rVert^{2}$ 重新缩放，使不同约束族之间可比。$W$ 是分块控制权重，使共享首块可以比增量块受到更重的惩罚。
+
+\paragraph{问题 B：全硬 QP，闭式解}
+当前无任何软行时使用。
+\[
+\min_{u}\ \tfrac12\lVert W u\rVert^{2}
+\quad\text{s.t.}\quad A u\le b,\quad A_{\mathrm{eq}}u=b_{\mathrm{eq}}
+\]
+
+\noindent 通过\textbf{枚举不等式活跃集}求解，系统在 $q=Wu$ 下有闭式最小范数解。
+
+\paragraph{两类问题与各层的对应}
+是否含 slack 行随当前激活的约束变化，与求解后端是两件事。第一、二层的后端固定为 \cf{quadprog}，第三层使用闭式活跃集枚举。
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}p{1.6cm}R@{}}
+\toprule
+第一层 & $0\le t<0.50$ 无任何 slack 行（问题退化为全硬形式，仍由 \cf{quadprog} 求解）；$0.50\le t<0.90$ 几何软、方差硬；$0.90\le t<0.97$ 几何软、方差软；$0.97\le t\le0.996$ 几何硬、方差软 \\
+第二层 & $0\le t<0.95$ PTCLF 与几何安全为软、方差硬；$t\ge0.95$ 两者变硬而方差行同时转软。承担 slack 的对象在 0.95 互换，因此全程含 slack 行 \\
+第三层 & 全程无 slack 行 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{其他求解器设置}
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}p{5.8cm}p{2.2cm}R@{}}
+\toprule
+\textbf{参数} & \textbf{取值} & \textbf{说明} \\
+\midrule
+\cf{joint\_safety\_softmin\_kappa} & 2000 & 三层共用；最多引入 $\log(n)/\kappa$ 的额外保守量 \\
+\cf{anchor\_snap\_flow\_steps} & L2: 4，L3: 5 & 末尾若干步通过等式行把端点钉到上层锚点；该窗口内 PTCLF 关闭，barrier 保持活跃 \\
+\cf{grad\_tol} & $10^{-6}$ & 梯度退化低于该值的行被跳过 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{增益的一般形式}
+每个 barrier 都使用双分支增益：$h\ge0$ 时用 $\varphi_0$；$h<0$ 时用恢复增益，在 \cf{phi1\_switch\_time} 处由常增益 \cf{early\_gain} 切换到规定时间 blow-up $\omega/(1-t)^2$。
+
+\subsection{约束调度总览}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[x=1cm,y=1cm,font=\scriptsize]
+
+\def\W{11.6}
+% ---- 第一层 ----
+\node[anchor=west,font=\small\bfseries] at (-4.0,0.4) {第一层};
+\foreach \r/\lab in {0/{方差 HOCBF},1/{方差 PTCBF},2/{联合障碍--边界 soft-min},3/{锚点 PTCLF}}{
+  \node[anchor=east] at (-0.15,-0.42*\r) {\lab};
+  \draw[offc!60,fill=offc!25] (0,-0.42*\r-0.13) rectangle (\W,-0.42*\r+0.13);
+}
+\fill[hardc] (0,-0.13) rectangle (10.48,0.13);
+\fill[softc] (10.48,-0.13) rectangle (\W,0.13);
+\fill[hardc] (0,-0.55) rectangle (10.48,-0.29);
+\fill[softc] (10.48,-0.55) rectangle (\W,-0.29);
+\fill[softc] (5.82,-0.97) rectangle (11.30,-0.71);
+\fill[hardc] (11.30,-0.97) rectangle (\W,-0.71);
+\node[anchor=west,font=\scriptsize\itshape] at (0.1,-1.26) {未启用};
+
+% ---- 第二层 ----
+\node[anchor=west,font=\small\bfseries] at (-4.0,-2.0) {第二层};
+\foreach \r/\lab in {0/{方差 HOCBF},1/{方差 PTCBF},2/{联合障碍--边界 soft-min},3/{锚点 PTCLF},4/{端点覆盖}}{
+  \node[anchor=east] at (-0.15,-2.6-0.42*\r) {\lab};
+  \draw[offc!60,fill=offc!25] (0,-2.6-0.42*\r-0.13) rectangle (\W,-2.6-0.42*\r+0.13);
+}
+\fill[hardc] (0,-2.73) rectangle (11.06,-2.47);
+\fill[softc] (11.06,-2.73) rectangle (\W,-2.47);
+\fill[hardc] (0,-3.15) rectangle (11.06,-2.89);
+\fill[softc] (11.06,-3.15) rectangle (\W,-2.89);
+\fill[softc] (3.49,-3.57) rectangle (11.06,-3.31);
+\fill[hardc] (11.06,-3.57) rectangle (\W,-3.31);
+\fill[softc] (0,-3.99) rectangle (11.06,-3.73);
+\fill[hardc] (11.06,-3.99) rectangle (11.14,-3.73);
+\fill[snapc] (11.14,-4.41) rectangle (\W,-4.15);
+
+% ---- 第三层 ----
+\node[anchor=west,font=\small\bfseries] at (-4.0,-5.0) {第三层};
+\foreach \r/\lab in {0/{方差 HOCBF},1/{方差 PTCBF},2/{联合障碍--边界 soft-min},3/{锚点 PTCLF},4/{端点覆盖}}{
+  \node[anchor=east] at (-0.15,-5.6-0.42*\r) {\lab};
+  \draw[offc!60,fill=offc!25] (0,-5.6-0.42*\r-0.13) rectangle (\W,-5.6-0.42*\r+0.13);
+}
+\node[anchor=west,font=\scriptsize\itshape] at (0.1,-5.6) {已关闭};
+\fill[hardc] (0,-6.15) rectangle (9.90,-5.89);
+\fill[hardc] (0,-6.57) rectangle (\W,-6.31);
+\fill[hardc] (0,-6.99) rectangle (11.02,-6.73);
+\fill[snapc] (11.02,-7.41) rectangle (\W,-7.15);
+
+% ---- 时间轴 ----
+\draw[gray] (0,-7.75) -- (\W,-7.75);
+\foreach \x/\lab in {0/0,2.91/0.25,3.49/0.30,5.82/0.50,8.73/0.75,9.90/0.85,11.06/0.95,11.6/0.996}{
+  \draw[gray] (\x,-7.75) -- (\x,-7.88);
+  \node[anchor=north,font=\scriptsize] at (\x,-7.90) {\lab};
+}
+\node[anchor=north,font=\scriptsize] at (5.8,-8.35) {流时间 $t$};
+
+% ---- 图例 ----
+\fill[hardc] (0,-8.9) rectangle (0.45,-8.72);
+\node[anchor=west,font=\scriptsize] at (0.55,-8.81) {硬约束};
+\fill[softc] (2.1,-8.9) rectangle (2.55,-8.72);
+\node[anchor=west,font=\scriptsize] at (2.65,-8.81) {带 slack 的软约束};
+\draw[offc!60,fill=offc!25] (5.6,-8.9) rectangle (6.05,-8.72);
+\node[anchor=west,font=\scriptsize] at (6.15,-8.81) {未激活};
+\fill[snapc] (7.9,-8.9) rectangle (8.35,-8.72);
+\node[anchor=west,font=\scriptsize] at (8.45,-8.81) {端点覆盖};
+\end{tikzpicture}
+\caption{三层约束激活与软硬切换时序}
+\end{figure}
+
+\clearpage
+
+% =====================================================================
+\section{第一层}
+
+\subsection{GP 参数}
+\begin{center}
+\small
+\begin{tabular}{@{}lc@{}}
+\toprule
+\textbf{参数} & \textbf{取值} \\
+\midrule
+\cf{n\_pretrain} & 450 \\
+\cf{training\_accuracy\_threshold} & 0.8 \\
+\cf{noise\_std} & --- \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{精确切换时刻}
+\cf{slack\_switch\_time = 0.90}；作用于第 1--5 点；PTCLF 未启用。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+\textbf{约束} & \textbf{激活} & \textbf{变硬} & \textbf{变软} & \textbf{结束} & \textbf{slack 权重} \\
+\midrule
+方差 HOCBF（积分型） & 0.00 & 0.00 & 0.90 & 0.996 & $10^{4}$ \\
+方差 PTCBF（终端 $\beta$） & 0.00 & 0.00 & 0.90 & 0.996 & $10^{4}$ \\
+联合障碍--边界 soft-min & 0.50 & 0.97 & 0.50 & 0.996 & 10 \\
+锚点 PTCLF & \multicolumn{5}{c}{未启用} \\
+\bottomrule
+\end{tabular}
+\end{center}
+\noindent 三个障碍函数与两侧边界场先被合成一个联合安全函数
+\[
+h=-\tfrac{1}{\kappa}\log\sum_i e^{-\kappa h_i},\qquad \kappa=2000,
+\]
+每个受控点最终只向 QP 提供\textbf{一条}约束。
+
+\subsection{增益参数}
+\begin{center}
+\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{约束} & $\varphi_0$ & \textbf{early\_gain} & $\omega$ & \textbf{切换 }$t$ \\
+\midrule
+联合 soft-min & 2.0 & --- & 0.008 & 0.0 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{终端方差预算}
+\begin{center}
+\small
+\begin{tabular}{@{}lc@{}}
+\toprule
+\textbf{参数} & \textbf{取值} \\
+\midrule
+\cf{terminal\_variance\_beta\_final} & 0.1 \\
+\cf{ptzf\_initial\_margin} & 3 \\
+\cf{ptzf\_gamma} & 0.3 \\
+\cf{terminal\_variance\_alpha} & 8.0 \\
+\cf{integral\_uncertainty\_budget} & 10 \\
+\cf{hocbf\_alpha2} & 3.0 \\
+\cf{psi1\_margin} & 2 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{求解器}
+\begin{center}
+\small
+\begin{tabular}{@{}lc@{}}
+\toprule
+\cf{closed\_form\_solver\_enabled} & false \\
+实际使用的后端 & \cf{quadprog}，interior-point-convex \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{拒绝采样}
+以整条轨迹为单位，失败就换下一个种子重抽，最多 100 次。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lc@{}}
+\toprule
+\cf{seed\_scope} & trajectory \\
+\cf{retry\_scope} & trajectory \\
+\cf{max\_attempts\_per\_trajectory} & 100 \\
+\cf{max\_upstream\_retries} & --- \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% =====================================================================
+\section{第二层}
+
+\subsection{GP 参数}
+\begin{center}
+\small
+\begin{tabular}{@{}lc@{}}
+\toprule
+\textbf{参数} & \textbf{取值} \\
+\midrule
+\cf{n\_pretrain} & 500 \\
+\cf{training\_accuracy\_threshold} & 3.0 \\
+\cf{noise\_std} & 优化值 $\div\,50$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent \textbf{长度尺度调度}：使用单一标量调度，随流时间由 $1.0$ 收缩到 $0.5$。
+
+\subsection{精确切换时刻}
+\cf{slack\_switch\_time = 0.95}；作用于第 2--4 点；端点覆盖 为 4 步，起点 $t=0.95616$。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+\textbf{约束} & \textbf{激活} & \textbf{变硬} & \textbf{变软} & \textbf{结束} & \textbf{slack 权重} \\
+\midrule
+方差 HOCBF（积分型） & 0.00 & 0.00 & 0.95 & 0.996 & 10 \\
+方差 PTCBF（终端 $\beta$） & 0.00 & 0.00 & 0.95 & 0.996 & 10 \\
+联合障碍--边界 soft-min & 0.30 & 0.95 & 0.30 & 0.996 & $10^{5}$ \\
+锚点 PTCLF & 0.00 & 0.95 & 0.00 & 0.95616 & $10^{3}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent PTCLF 采用uniconflow形式
+\[
+\dot V \le c_{\mathrm{pt}}\bigl(\bar V-V\bigr)+\dot{\bar V},
+\qquad
+\bar V(t)=\bar V_0\exp\!\Bigl(-c_g\,\tfrac{t}{1-t}\Bigr),
+\]
+其中 $c_{\mathrm{pt}}=350$，$c_g=15.5$，初始 margin 为 1。它在覆盖开启时结束，因为此后端点被直接覆盖。
+
+\subsection{增益参数}
+\begin{center}
+\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{约束} & $\varphi_0$ & \textbf{early\_gain} & $\omega$ & \textbf{切换 }$t$ \\
+\midrule
+联合 soft-min & 15.0 & 2.0 & 0.0167 & 0.90 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{终端方差预算}
+\begin{center}
+\small
+\begin{tabular}{@{}lc@{}}
+\toprule
+\textbf{参数} & \textbf{取值} \\
+\midrule
+\cf{terminal\_variance\_beta\_final} & 3.5 \\
+\cf{ptzf\_initial\_margin} & 0.1 \\
+\cf{ptzf\_gamma} & 0.3 \\
+\cf{terminal\_variance\_alpha} & 0.3 \\
+\cf{integral\_uncertainty\_budget} & 30 \\
+\cf{hocbf\_alpha2} & 0.5 \\
+\cf{psi1\_margin} & 55 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{求解器}
+\begin{center}
+\small
+\begin{tabular}{@{}lc@{}}
+\toprule
+\cf{closed\_form\_solver\_enabled} & false \\
+实际使用的后端 & \cf{quadprog}，interior-point-convex \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{拒绝采样}
+每个段有自己的种子，失败的段最多重试 20 次。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lc@{}}
+\toprule
+\cf{seed\_scope} & segment \\
+\cf{retry\_scope} & segment \\
+\cf{max\_attempts\_per\_trajectory} & 20 \\
+\cf{max\_upstream\_retries} & 10 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% =====================================================================
+\section{第三层}
+
+第二层的 17 个点形成 16 个相邻点对，第三层针对每个点对生成一个五点增量段。训练数据则是在 65 点轨迹上以五点窗口、stride $=4$ 切成 16 个非滑窗窗口（1--5, 5--9, \ldots, 61--65），窗口内使用局部增量表示 $[S_0,\,S_1-S_0,\,\ldots,\,S_4-S_3]$。
+
+\subsection{GP 参数}
+\begin{center}
+\small
+\begin{tabular}{@{}lc@{}}
+\toprule
+\textbf{参数} & \textbf{取值} \\
+\midrule
+\cf{n\_pretrain} & 800 \\
+\cf{training\_accuracy\_threshold} & 0.20 \\
+\cf{noise\_std} & 0.01（固定） \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent \textbf{长度尺度调度}：在两端各取一个短窗，独立估计每个输出的完整 ARD 向量，再在同一个 GP 内插值
+\[
+\ell_d(t)=\ell_{d,1}+\bigl(\ell_{d,0}-\ell_{d,1}\bigr)(1-t)^{p}.
+\]
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}p{5.6cm}p{2.2cm}R@{}}
+\toprule
+\textbf{第三层端点 ARD} & \textbf{取值} & \textbf{说明} \\
+\midrule
+\cf{endpoint\_length\_scale\_window} & 0.1 & 两端各取的流时间比例 \\
+\cf{endpoint\_length\_scale\_power} & $p=1.0$ & \\
+\cf{cap} / \cf{floor} & 10.0 / 2.0 & 裁掉病态分量（420 个分量中 33 个达到 $8.3\times10^{6}$）\\
+起点 / 终点缩放 & 2.0 / 0.9 & 放宽 $\ell_0$ 以覆盖源状态，终点轻度收缩 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{精确切换时刻}
+作用于第 2--4 点；\textbf{所有行全程为硬约束，无任何 slack}。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lcccl@{}}
+\toprule
+\textbf{约束} & \textbf{激活} & \textbf{变硬} & \textbf{结束} & \textbf{类型} \\
+\midrule
+方差 HOCBF（积分型） & \multicolumn{3}{c}{已禁用} & 关闭 \\
+方差 PTCBF（终端 $\beta$） & 0.00 & 0.00 & 0.85 & 硬 \\
+联合障碍--边界 soft-min & 0.00 & 0.00 & 0.996 & 硬 \\
+锚点 PTCLF（SafeFlow 形式） & 0.00 & 0.00 & 0.9462 & 硬 \\
+端点覆盖等式 & 0.9462 & 0.9462 & 0.996 & 等式 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent SafeFlow 形式的 PTCLF 为 $\dot V\le -\varphi(t,V)\,V$，增益分三段：
+\[
+\varphi(t,V)=
+\begin{cases}
+30, & V\le 0,\\
+80, & V>0,\ 0\le t<0.8,\\
+\displaystyle\frac{2}{(1-t)^{2}}, & V>0,\ 0.8\le t<0.9462.
+\end{cases}
+\]
+即 $V>0$ 时先用常数 early\_gain$\,=80$，到 $t=0.8$ 才切换到 blow-up；$\varphi_1$ 无上限封顶，PTCLF 本身在 $t=0.9462$ 随端点覆盖开启而结束。
+
+\subsection{增益参数}
+\begin{center}
+\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{约束} & $\varphi_0$ & \textbf{early\_gain} & $\omega$ & \textbf{切换 }$t$ \\
+\midrule
+联合 soft-min & 20.0 & 2.0 & 0.01 & 0.93 \\
+PTCLF 端点 & 30 & 80 & 2 & 0.80 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{终端方差预算}
+\begin{center}
+\small
+\begin{tabular}{@{}lc@{}}
+\toprule
+\textbf{参数} & \textbf{取值} \\
+\midrule
+\cf{terminal\_variance\_beta\_final} & 3.0 \\
+\cf{ptzf\_initial\_margin} & 1.0 \\
+\cf{ptzf\_gamma} & 1.0 \\
+\cf{terminal\_variance\_alpha} & 1.0 \\
+\cf{integral\_uncertainty\_budget} & 5 \\
+\cf{hocbf\_alpha2} & ---（关闭） \\
+\cf{psi1\_margin} & ---（关闭） \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{求解器}
+\begin{center}
+\small
+\begin{tabular}{@{}lc@{}}
+\toprule
+\cf{closed\_form\_solver\_enabled} & true \\
+实际使用的后端 & \textbf{闭式活跃集枚举} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent \textbf{顺序级联}：第三层不解一个联合 QP，而是顺序求解三个小 QP。每一级都以\emph{前一级的完整控制器}作为参考，使各级修正相互叠加而非相互替换。
+
+\begin{center}
+\small
+\begin{tabular}{@{}clllc@{}}
+\toprule
+\textbf{级} & \textbf{行} & \textbf{结果} & \textbf{$S_0$ 控制权重} & \textbf{求解器} \\
+\midrule
+1 & 锚点 PTCLF（端点） & $u_1=u_{\mathrm{PTCLF}}$ & 40 & 闭式 \\
+2 & 联合安全 soft-min（P2/P3/P4） & $u_2=u_1+\Delta u_{\mathrm{safety}}$ & 40 & 闭式 \\
+3 & 终端方差 PTCBF & $u_3=u_2+\Delta u_{\mathrm{variance}}$ & 3 & 闭式 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{拒绝采样}
+每段独立，失败的段最多重试 20 次。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lc@{}}
+\toprule
+\cf{seed\_scope} & segment \\
+\cf{retry\_scope} & segment \\
+\cf{max\_attempts\_per\_trajectory} & 20 \\
+\cf{max\_upstream\_retries} & 10 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% =====================================================================
+\section{规定时间时钟}
+
+规定时间 barrier 保证的是"在终端时刻 $T$ \emph{之前}完成恢复"。积分终止于 $t=0.996$，因此某个约束的时钟是否对齐到该终点，决定了它的保证是否真正兑现。
+
+\begin{center}
+\small
+\begin{tabular}{@{}lccl@{}}
+\toprule
+\textbf{约束} & \textbf{时钟终点} & \textbf{实际作用结束} & \textbf{是否运行到时钟终点} \\
+\midrule
+第一、二层方差 PTZF & 0.996 & 0.996 & 是 \\
+第三层终端方差 PTCBF & 0.996 & 0.85 & \textbf{否}（提前关闭） \\
+几何安全 PTCBF & 1.0 & 0.996 & \textbf{否} \\
+第三层端点 PTCLF & 1.0 & 0.9462 & \textbf{否}（由覆盖补偿） \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% =====================================================================
+\section{拒绝采样的上溯}
+
+每层的 rollout 外面都包了一个确定性的拒绝采样器。只有失败的那个段换种子重跑，已经通过的段冻结不动。
+
+单靠换本层的种子不一定救得回来——如果上一层给的锚点本身就把这个段逼到了没法满足方差条件的位置，那本层怎么换都没用。所以加了逐级上溯：
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}p{3.4cm}R@{}}
+\toprule
+\textbf{触发} & \textbf{动作} \\
+\midrule
+第三层某段 20 次仍失败 & 重新生成它所属的那个第二层段，连带该段下面的 4 个第三层子段一起重跑 \\
+\addlinespace
+替代的第二层段也失败，\newline 或连续 10 个替代第二层段都产不出合格子段 & 继续上溯到第一层：换掉对应的第一层种子，重跑该父轨迹下的 4 个第二层段和 16 个第三层段 \\
+\addlinespace
+第二层某段 20 次仍失败 & 直接上溯第一层：换掉所属的第一层种子，重跑该父轨迹及其 4 个第二层段 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\noindent 上溯次数上限是 \cf{max\_upstream\_retries = 10}。\textbf{不受这次上溯影响的段全部保持原样}，不会被牵连重跑。
+
+% =====================================================================
+\section{评估指标}
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}p{2.6cm}R@{}}
+\toprule
+\textbf{指标} & \textbf{采用的定义} \\
+\midrule
+\multicolumn{2}{@{}l@{}}{\itshape 对照 SafeFlow 的指标} \\
+\midrule
+Safety & 第三层生成轨迹中\emph{所有}生成点均位于赛道内且在全部物理障碍之外的比例。逐点判定，不检查连接边。第一、第二层原始 $h$ 容差为 $10^{-8}$；第三层采用 $5\times10^{-4}$ 的物理法向距离容差 \\
+KL & 数据集终点分布与生成终点分布之间的 $D_{\mathrm{KL}}(P\Vert Q)$ \\
+CS & SafeFlow 式 (35)，$\operatorname{mean}(1-\cos\theta_k)$，对全部内部顶点 \\
+AS & SafeFlow 式 (37)，$\operatorname{mean}\lVert s_{k+1}-2s_k+s_{k-1}\rVert$，对全部有效二阶差分 \\
+Time & 三层 RK4 rollout 秒数之和除以生成轨迹条数 \\
+\midrule
+\multicolumn{2}{@{}l@{}}{\itshape 额外记录的过程量} \\
+\midrule
+\cf{mean\_predictive\_}\newline\cf{variance} & 第三层 GP 预测方差在全部时刻、全部段样本、全部输出维度上的均值 \\
+\cf{terminal\_}\newline\cf{predictive\_variance} & 同上，但只取最后一个时刻，即末端方差 \\
+$u$ & 每个 RK4 子步施加的流场修正量 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+
+
+\end{document}

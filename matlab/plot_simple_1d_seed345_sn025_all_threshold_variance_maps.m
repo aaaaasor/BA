@@ -3,11 +3,12 @@ function result = plot_simple_1d_seed345_sn025_all_threshold_variance_maps()
 % thresholds and the all-data model.
 
 root=fileparts(mfilename('fullpath'));
-out=fullfile(root,'outputs','1d case全局GP训练阈值实验_50x40_seed345_sn025');
+out=fullfile(root,'outputs',['1d case' char([20840 23616 71 80])]);
 D=load(fullfile(out,'Training_Data_and_Seeds.mat'),'X','Y','cfg');
 H=load(fullfile(out,'Manual_Hyperparameters.mat'),'SigmaL','SigmaF','SigmaN');
 X=D.X;Y=D.Y;n=size(X,1);assert(n==2000);
-thresholds=[.20 .15 .10 .05];nm=numel(thresholds)+1;
+S=load(fullfile(out,'Simple1D_GlobalGP_Threshold_Sweep.mat'),'sweep');
+thresholds=S.sweep.thresholds;nm=numel(thresholds)+1;   % read from the sweep, never hardcode
 labels=cell(nm,1);models=cell(nm,1);indices=cell(nm,1);
 for i=1:numel(thresholds)
     model_path=fullfile(out,sprintf('threshold_0p%02d_GlobalGP_Model.mat',round(100*thresholds(i))));
@@ -26,10 +27,14 @@ labels{nm}=sprintf('all data: %d/%d points (100%%)',numel(indices{nm}),n);
 
 pad=.08*range(X(:,2));t_grid=linspace(0,1,151);x_grid=linspace(min(X(:,2))-pad,max(X(:,2))+pad,181);
 [T,Xgrid]=meshgrid(t_grid,x_grid);Q=[T(:)';Xgrid(:)'];prior=H.SigmaF^2;
-maps=cell(nm,1);map_stats=zeros(nm,3);
+maps=cell(nm,1);map_stats=zeros(nm,3);tbl_stats=zeros(nm,4);
 for i=1:nm
     maps{i}=reshape(predict_var(models{i},Q),size(T))/prior;
     map_stats(i,:)=[mean(maps{i},'all'),min(maps{i},[],'all'),max(maps{i},[],'all')];
+    % Table 8 of the thesis: raw and normalised variance, whole map and the
+    % terminal (t = 1) column, on the SAME shared grid for every model.
+    tbl_stats(i,:)=[mean(maps{i},'all')*prior, mean(maps{i}(:,end))*prior, ...
+        mean(maps{i},'all'), mean(maps{i}(:,end))];
 end
 
 f=figure('Visible','off','Color','w','Position',[20 30 1800 1050]);
@@ -63,6 +68,17 @@ save(fullfile(out,'Simple1D_GlobalGP_Variance_Maps_All_Thresholds.mat'),'result'
 writetable(stats,fullfile(out,'Simple1D_GlobalGP_Variance_Maps_All_Thresholds.csv'), ...
     'WriteRowNames',true);
 disp(stats);fprintf('Saved %s\n',emf);
+
+% Thesis table 8: shared-map variance statistics.  Regenerated here so it can
+% never go stale relative to the thresholds actually used by the sweep.
+tbl9=array2table([[thresholds(:);NaN],cellfun(@numel,indices), ...
+    100*cellfun(@numel,indices)/n,tbl_stats], ...
+    'VariableNames',{'Threshold','TrainingPoints','RetentionPercent', ...
+    'MapMeanRawVariance','MapTerminalRawVariance', ...
+    'MapMeanNormalizedVariance','MapTerminalNormalizedVariance'});
+writetable(tbl9,fullfile(out,'Simple1D_GlobalGP_Table9_Map_Variance_Statistics.csv'));
+save(fullfile(out,'Simple1D_GlobalGP_Table9_Map_Variance_Statistics.mat'),'tbl9','-v7.3');
+disp(tbl9);
 end
 
 function [m,idx]=fit_selected(X,Y,thr,sn,sf,sl)

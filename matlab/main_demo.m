@@ -1,6 +1,6 @@
 clear;
 clc;
-% close all;
+% close all
 %% Configuration
 cfg = get_config();
 % Legacy/global reproducibility for data preparation only.  Second-level
@@ -83,7 +83,8 @@ disp(['First-level LoG-GP fit/load elapsed: ', ...
     num2str(toc(first_fit_timer), '%.1f'), ' seconds']);
 % 拟合/加载完成后丢掉 K：后面只做预测，不再往模型里加数据。K 与 L 同样大，
 % 而 parfor 要把整个模型广播给每一个 worker，丢掉它直接把传输量减半。
-model_collection = strip_model_for_prediction(model_collection, 'First-level');
+model_collection = strip_model_for_prediction(model_collection, ...
+    'First-level', struct_field_default(cfg.gp, 'use_mex_prediction', false));
 
 %% RK4 Rollout
 disp('Running first-level RK4 rollout...');
@@ -727,7 +728,8 @@ segment_model_collection = fit_or_load_loggp_model(segment_s_slices, ...
 disp(['Second-level LoG-GP fit/load elapsed: ', ...
     num2str(toc(second_fit_timer), '%.1f'), ' seconds']);
 segment_model_collection = strip_model_for_prediction( ...
-    segment_model_collection, 'Second-level');
+    segment_model_collection, 'Second-level', ...
+    struct_field_default(cfg.gp, 'use_mex_prediction', false));
 
 second_level_anchor_points = reconstructed_points;
 
@@ -1819,7 +1821,8 @@ if isfield(cfg, 'enable_third_level') && cfg.enable_third_level
     disp(['Third-level LoG-GP fit/load elapsed: ', ...
         num2str(toc(third_fit_timer), '%.1f'), ' seconds']);
     third_segment_model_collection = strip_model_for_prediction( ...
-        third_segment_model_collection, 'Third-level');
+        third_segment_model_collection, 'Third-level', ...
+        struct_field_default(cfg.gp, 'use_mex_prediction', false));
 
     % Advisor diagnostic: when enabled, evaluate the fitted GP variance on
     % every actual third-level flow-matching training trajectory, before any
